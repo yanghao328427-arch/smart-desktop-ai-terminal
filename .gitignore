@@ -25,3 +25,4 @@ output/
 backend/data/*.json
 backend/data/*.db
 backend/data/audio/
+.playwright-cli/

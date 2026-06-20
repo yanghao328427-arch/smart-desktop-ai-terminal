@@ -1,3 +1,12 @@
+---
+title: Smart Desktop AI Terminal
+emoji: desktop_computer
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+---
+
 # 智能桌面 AI 终端重建工程
 
 这是物联网工程综合课程设计的新基线工程。旧项目不再继续补丁式开发，本仓库从统一协议、状态机和分层验收重新搭建。
