@@ -9,7 +9,7 @@
     </view>
 
     <view class="score-card {{summary.readyClass}}">
-      <text class="score-label">设备就绪度</text>
+      <text class="score-label">真实链路状态</text>
       <text class="score-value">{{summary.readyScore}}</text>
       <text class="score-sub">{{summary.readyText}} · {{summary.sessionText}} · ACK {{summary.ackText}}</text>
     </view>
@@ -36,7 +36,7 @@
       <text class="panel-meta">{{refreshTime}}</text>
     </view>
     <view class="row">
-      <input value="{{apiBase}}" placeholder="http://电脑局域网IP:8083" bindinput="onApiBaseInput" />
+      <input value="{{apiBase}}" placeholder="https://yh001399-smart-desktop-ai-terminal.hf.space" bindinput="onApiBaseInput" />
       <button size="mini" bindtap="saveApiBase">保存</button>
     </view>
     <text class="helper">设备 {{deviceId}} · 协议 {{summary.protocolText}} · 连接数 {{summary.connectionText}}</text>
@@ -48,7 +48,7 @@
       <text class="panel-meta">云端写入保护</text>
     </view>
     <view class="row">
-      <input password="true" value="{{controlToken}}" placeholder="Render CONTROL_TOKEN" bindinput="onControlTokenInput" />
+      <input password="true" value="{{controlToken}}" placeholder="Hugging Face CONTROL_TOKEN" bindinput="onControlTokenInput" />
       <button size="mini" bindtap="saveControlToken">保存</button>
     </view>
     <text class="helper">控制、对话、RFID、ASR 上传需要口令；状态读取保持实时公开。</text>

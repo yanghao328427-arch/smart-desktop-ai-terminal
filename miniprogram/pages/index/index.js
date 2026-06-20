@@ -3,8 +3,8 @@ const AUTO_REFRESH_MS = app.globalData.refreshIntervalMs || 5000;
 const DEFAULT_SUMMARY = {
   protocolText: "-",
   aiText: "-",
-  readyText: "检查中",
-  readyScore: "42%",
+  readyText: "等待真实接口",
+  readyScore: "未检查",
   readyClass: "ready wait",
   readyCloudText: "-",
   readyDeviceText: "-",
@@ -93,8 +93,8 @@ function buildSummary(state, status, health) {
   return {
     protocolText: safeStatus.protocol || "-",
     aiText: cloudOk ? `${safeHealth.ai_provider}/${safeHealth.ai_model}` : "本地规则",
-    readyText: ready ? "就绪" : (waiting ? "待确认" : "需处理"),
-    readyScore: ready ? "96%" : (waiting ? "82%" : "42%"),
+    readyText: `云端 ${cloudOk ? "OK" : "未就绪"} · 设备 ${deviceOk ? "在线" : "未连接"} · UART ${safeState.uart_ok ? "OK" : "未确认"} · ACK ${ackOk ? "OK" : "异常"} · 传感器 ${sensorOk ? "有上报" : "等待上报"}`,
+    readyScore: ready ? "闭环就绪" : (waiting ? "待确认" : "需处理"),
     readyClass: ready ? "ready ok" : (waiting ? "ready warn" : "ready bad"),
     readyCloudText: cloudOk ? (safeHealth.ai_model || "OK") : "未就绪",
     readyDeviceText: deviceOk ? "在线 / UART OK" : "检查连接",

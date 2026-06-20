@@ -73,7 +73,7 @@ button.secondary {
 
 .score-value {
   color: #ffffff;
-  font-size: 82rpx;
+  font-size: 52rpx;
   font-weight: 900;
   letter-spacing: 0;
   line-height: 1.05;
@@ -84,7 +84,9 @@ button.secondary {
   color: #32d583;
   font-size: 24rpx;
   font-weight: 700;
+  line-height: 1.45;
   margin-top: 10rpx;
+  text-align: center;
 }
 
 .score-card.warn .score-sub {
