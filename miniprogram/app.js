@@ -1,6 +1,6 @@
 App({
   globalData: {
-    apiBase: "https://smart-desktop-ai-terminal.onrender.com",
+    apiBase: "https://yh001399-smart-desktop-ai-terminal.hf.space",
     deviceId: "desktop-agent-001",
     refreshIntervalMs: 5000,
     controlToken: ""
