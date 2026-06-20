@@ -1,0 +1,182 @@
+<view class="page">
+  <view class="hero">
+    <view class="hero-top">
+      <view>
+        <text class="eyebrow">Graphite Mission Dashboard</text>
+        <text class="title">智能桌面 AI 终端</text>
+      </view>
+      <button class="ghost" size="mini" bindtap="manualRefresh">刷新</button>
+    </view>
+
+    <view class="score-card {{summary.readyClass}}">
+      <text class="score-label">设备就绪度</text>
+      <text class="score-value">{{summary.readyScore}}</text>
+      <text class="score-sub">{{summary.readyText}} · {{summary.sessionText}} · ACK {{summary.ackText}}</text>
+    </view>
+
+    <view class="status-strip">
+      <view class="status-chip">
+        <text>云端 AI</text>
+        <text>{{summary.readyCloudText}}</text>
+      </view>
+      <view class="status-chip">
+        <text>WS</text>
+        <text>{{summary.sessionText}}</text>
+      </view>
+      <view class="status-chip">
+        <text>设备</text>
+        <text>{{summary.onlineText}}</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="panel connection-panel">
+    <view class="panel-title">
+      <text>连接后端</text>
+      <text class="panel-meta">{{refreshTime}}</text>
+    </view>
+    <view class="row">
+      <input value="{{apiBase}}" placeholder="http://电脑局域网IP:8083" bindinput="onApiBaseInput" />
+      <button size="mini" bindtap="saveApiBase">保存</button>
+    </view>
+    <text class="helper">设备 {{deviceId}} · 协议 {{summary.protocolText}} · 连接数 {{summary.connectionText}}</text>
+  </view>
+
+  <view class="panel connection-panel">
+    <view class="panel-title">
+      <text>公网控制口令</text>
+      <text class="panel-meta">云端写入保护</text>
+    </view>
+    <view class="row">
+      <input password="true" value="{{controlToken}}" placeholder="Render CONTROL_TOKEN" bindinput="onControlTokenInput" />
+      <button size="mini" bindtap="saveControlToken">保存</button>
+    </view>
+    <text class="helper">控制、对话、RFID、ASR 上传需要口令；状态读取保持实时公开。</text>
+  </view>
+  <view class="panel">
+    <view class="panel-title">
+      <text>硬件控制</text>
+      <text class="panel-meta">AI 指令下发</text>
+    </view>
+    <view class="control-grid">
+      <button class="control on" data-tool="fan_on" bindtap="sendHardwareAction">
+        <text class="control-title">风扇</text>
+        <text class="control-sub">开启</text>
+      </button>
+      <button class="control" data-tool="beep" bindtap="sendHardwareAction">
+        <text class="control-title">蜂鸣</text>
+        <text class="control-sub">提醒</text>
+      </button>
+      <button class="control lock" data-tool="lock" bindtap="sendHardwareAction">
+        <text class="control-title">锁定</text>
+        <text class="control-sub">安全</text>
+      </button>
+      <button class="control unlock" data-tool="unlock" bindtap="sendHardwareAction">
+        <text class="control-title">解锁</text>
+        <text class="control-sub">恢复</text>
+      </button>
+    </view>
+  </view>
+
+  <view class="panel">
+    <view class="panel-title">
+      <text>传感器</text>
+      <text class="panel-meta">实时摘要</text>
+    </view>
+    <view class="sensor-list">
+      <view class="sensor-row"><text>温度</text><text>{{summary.temperatureText}}</text></view>
+      <view class="sensor-row"><text>湿度</text><text>{{summary.humidityText}}</text></view>
+      <view class="sensor-row"><text>距离</text><text>{{summary.distanceText}}</text></view>
+      <view class="sensor-row"><text>电位器</text><text>{{summary.potText}}</text></view>
+      <view class="sensor-row"><text>NTC</text><text>{{summary.ntcText}}</text></view>
+      <view class="sensor-row"><text>RGB</text><text>{{summary.rgbStatusText}}</text></view>
+      <view class="sensor-row"><text>编码器</text><text>{{summary.encoderText}}</text></view>
+    </view>
+  </view>
+
+  <view class="panel">
+    <view class="panel-title">
+      <text>AI 对话</text>
+      <text class="panel-meta">{{summary.aiText}}</text>
+    </view>
+    <view class="quick-grid">
+      <button class="secondary" data-text="你是谁" bindtap="sendPreset">自我介绍</button>
+      <button class="secondary" data-text="现在状态怎么样？结合温湿度和距离告诉我，并给我一个学习建议。" bindtap="sendPreset">状态建议</button>
+      <button class="secondary" data-text="打开风扇并进入专注30分钟" bindtap="sendPreset">组合动作</button>
+    </view>
+    <view class="chat">
+      <block wx:if="{{messages.length}}">
+        <block wx:for="{{messages}}" wx:key="id">
+          <view class="bubble {{item.role}}">{{item.text}}</view>
+        </block>
+      </block>
+      <text wx:else class="empty">还没有对话，先发一条真实指令。</text>
+    </view>
+    <view class="row">
+      <input value="{{chatText}}" placeholder="输入指令或问题..." bindinput="onChatInput" />
+      <button bindtap="sendChat">发送</button>
+    </view>
+  </view>
+
+  <view class="panel">
+    <view class="panel-title">
+      <text>闭环就绪</text>
+      <text class="panel-meta">闭环检查</text>
+    </view>
+    <view class="kv-list">
+      <view class="kv"><text>云端 AI</text><text>{{summary.readyCloudText}}</text></view>
+      <view class="kv"><text>设备会话</text><text>{{summary.readyDeviceText}}</text></view>
+      <view class="kv"><text>STM32 ACK</text><text>{{summary.readyAckText}}</text></view>
+      <view class="kv"><text>执行队列</text><text>{{summary.readyQueueText}}</text></view>
+      <view class="kv"><text>最近播报</text><text>{{summary.speechText}}</text></view>
+      <view class="kv"><text>最近 RFID</text><text>{{summary.lastRfidText}}</text></view>
+      <view class="kv"><text>RFID 时间</text><text>{{summary.lastRfidAtText}}</text></view>
+      <view class="kv"><text>ASR 状态</text><text>{{summary.lastAsrStatusText}}</text></view>
+      <view class="kv"><text>ASR 时间</text><text>{{summary.lastAsrAtText}}</text></view>
+      <view class="kv"><text>最新录音</text><text>{{summary.lastAudioText}}</text></view>
+    </view>
+  </view>
+
+  <view class="panel">
+    <view class="panel-title">
+      <text>RFID</text>
+      <text class="panel-meta">身份读取</text>
+    </view>
+    <view class="form-stack">
+      <input value="{{rfid.uid}}" placeholder="UID，例如 04A1B2C3" bindinput="onRfidUidInput" />
+      <input value="{{rfid.name}}" placeholder="用户名" bindinput="onRfidNameInput" />
+      <picker mode="selector" range="{{modes}}" value="{{modeIndex}}" bindchange="onModeChange">
+        <view class="picker">模式：{{modes[modeIndex]}}</view>
+      </picker>
+      <view class="row two">
+        <button bindtap="registerRfid">注册</button>
+        <button class="secondary" bindtap="scanRfid">提交 UID</button>
+      </view>
+    </view>
+  </view>
+
+  <view class="panel">
+    <view class="panel-title">
+      <text>最近动作</text>
+      <text class="panel-meta">{{summary.lastSeenText}}</text>
+    </view>
+    <block wx:if="{{recentActions.length}}">
+      <block wx:for="{{recentActions}}" wx:key="id">
+        <view class="action-item">
+          <text class="action-title">{{item.title}}</text>
+          <text class="action-line">{{item.line}}</text>
+          <text class="action-time">{{item.time}}</text>
+        </view>
+      </block>
+    </block>
+    <text wx:else class="helper">暂无动作记录</text>
+  </view>
+
+  <view class="panel diagnostics">
+    <view class="panel-title">
+      <text>诊断原文</text>
+      <text class="panel-meta">JSON</text>
+    </view>
+    <text class="mono">{{diagnosticsText}}</text>
+  </view>
+</view>

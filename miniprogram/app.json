@@ -1,0 +1,12 @@
+{
+  "pages": [
+    "pages/index/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "智能桌面 AI 终端",
+    "navigationBarBackgroundColor": "#050b12",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#050b12"
+  },
+  "style": "v2"
+}

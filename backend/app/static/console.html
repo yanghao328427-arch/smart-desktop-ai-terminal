@@ -1,0 +1,1494 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>智能桌面 AI 终端</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #f7f9fd;
+      --panel: #ffffff;
+      --panel-soft: #f8fbff;
+      --text: #101828;
+      --muted: #667085;
+      --subtle: #98a2b3;
+      --line: #dce6f2;
+      --line-soft: #edf2f7;
+      --blue: #1267f1;
+      --blue-2: #2d7cff;
+      --green: #12b76a;
+      --green-deep: #039855;
+      --green-soft: #eafaf2;
+      --orange: #f79009;
+      --purple: #7a5af8;
+      --shadow: 0 18px 54px rgba(16, 24, 40, 0.07);
+      --shadow-sm: 0 10px 28px rgba(16, 24, 40, 0.055);
+      --radius: 16px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 10% 0%, rgba(18, 103, 241, 0.08), transparent 28%),
+        radial-gradient(circle at 84% 6%, rgba(18, 183, 106, 0.07), transparent 26%),
+        var(--page);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.4;
+    }
+
+    button, input, select {
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+      cursor: pointer;
+      transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+    }
+
+    input, select {
+      width: 100%;
+      min-height: 39px;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      color: var(--text);
+      background: #ffffff;
+      outline: none;
+    }
+
+    input:focus, select:focus {
+      border-color: #9fc2ff;
+      box-shadow: 0 0 0 4px rgba(18, 103, 241, 0.10);
+    }
+
+    .workspace {
+      width: min(1518px, calc(100vw - 24px));
+      margin: 0 auto 24px;
+      display: grid;
+      grid-template-columns: minmax(980px, 1fr) 312px;
+      gap: 24px;
+      align-items: start;
+    }
+
+    .desktop-shell {
+      min-height: 1022px;
+      display: grid;
+      grid-template-columns: 204px minmax(0, 1fr);
+      border: 1px solid rgba(216, 226, 239, 0.96);
+      border-radius: 28px;
+      background: rgba(255, 255, 255, 0.93);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      backdrop-filter: blur(18px);
+    }
+
+    .sidebar {
+      min-height: 100%;
+      padding: 22px 14px 24px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      border-right: 1px solid var(--line-soft);
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    }
+
+    .side-brand {
+      display: flex;
+      gap: 11px;
+      align-items: center;
+      padding: 0 6px 28px;
+    }
+
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      color: #ffffff;
+      background: linear-gradient(145deg, var(--blue), #25a7ff);
+      box-shadow: 0 12px 24px rgba(18, 103, 241, 0.24);
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+
+    .side-brand strong {
+      display: block;
+      font-size: 15px;
+      line-height: 1.2;
+      font-weight: 820;
+      white-space: nowrap;
+    }
+
+    .side-brand span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .nav-list {
+      display: grid;
+      gap: 8px;
+      align-content: start;
+    }
+
+    .nav-item {
+      min-height: 42px;
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-radius: 10px;
+      color: #344054;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .nav-item.active {
+      position: relative;
+      color: var(--blue);
+      background: #eef5ff;
+    }
+
+    .nav-item.active::before {
+      content: "";
+      position: absolute;
+      left: -14px;
+      width: 3px;
+      height: 28px;
+      border-radius: 999px;
+      background: var(--blue);
+    }
+
+    .nav-icon {
+      width: 22px;
+      height: 22px;
+      display: grid;
+      place-items: center;
+      border: 1.5px solid #8ca0bc;
+      border-radius: 7px;
+      color: inherit;
+      font-size: 12px;
+      line-height: 1;
+      font-weight: 800;
+    }
+
+    .nav-item.active .nav-icon {
+      border-color: transparent;
+      color: #ffffff;
+      background: var(--blue);
+    }
+
+    .system-card {
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: #ffffff;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .system-card h3 {
+      margin: 0 0 9px;
+      color: #344054;
+      font-size: 12px;
+      font-weight: 760;
+    }
+
+    .ready-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .ready-row strong {
+      color: var(--green-deep);
+      font-size: 20px;
+      line-height: 1.1;
+    }
+
+    .status-line {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 0;
+      color: #475467;
+      font-size: 12px;
+    }
+
+    .status-value {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--green-deep);
+      font-size: 12px;
+      font-weight: 750;
+      background: transparent;
+    }
+
+    .status-value::before,
+    .pill::before,
+    .ok-badge::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .refresh-btn {
+      width: 100%;
+      min-height: 36px;
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--blue);
+      background: #ffffff;
+      font-weight: 760;
+    }
+
+    .main-console {
+      min-width: 0;
+      padding: 22px 22px 24px;
+    }
+
+    .console-head {
+      min-height: 48px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 9px;
+    }
+
+    .console-title h1 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.1;
+      font-weight: 840;
+      letter-spacing: 0;
+    }
+
+    .console-title p {
+      margin: 5px 0 0;
+      color: #344054;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .head-actions {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+    }
+
+    .pill {
+      min-height: 34px;
+      padding: 0 14px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid rgba(18, 103, 241, 0.12);
+      border-radius: 999px;
+      color: #175cd3;
+      background: #eaf2ff;
+      font-size: 13px;
+      font-weight: 760;
+      white-space: nowrap;
+    }
+
+    .pill.ok {
+      color: #027a48;
+      background: var(--green-soft);
+      border-color: rgba(18, 183, 106, 0.20);
+    }
+
+    .pill.warn {
+      color: #b54708;
+      background: #fff7e8;
+      border-color: rgba(247, 144, 9, 0.22);
+    }
+
+    .pill.bad {
+      color: #b42318;
+      background: #fff1f0;
+      border-color: rgba(240, 68, 56, 0.22);
+    }
+
+    .timebox {
+      min-width: 92px;
+      text-align: right;
+    }
+
+    .timebox strong {
+      display: block;
+      font-size: 16px;
+      line-height: 1.15;
+    }
+
+    .timebox span {
+      color: #344054;
+      font-size: 13px;
+    }
+
+    .card,
+    .proof-section,
+    .proof-card,
+    .bottom-card,
+    .phone-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .proof-section {
+      padding: 12px 16px;
+      margin-bottom: 12px;
+      border-radius: 18px;
+      box-shadow: 0 12px 32px rgba(16, 24, 40, 0.045);
+    }
+
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .section-head h2,
+    .card-title h2 {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.15;
+      font-weight: 820;
+      letter-spacing: 0;
+    }
+
+    .proof-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .proof-card {
+      min-height: 142px;
+      padding: 14px;
+      display: grid;
+      grid-template-rows: auto 1fr 38px;
+      gap: 8px;
+      background: linear-gradient(180deg, #ffffff 0%, #f9fbff 100%);
+    }
+
+    .proof-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .proof-title {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 16px;
+      font-weight: 820;
+      white-space: nowrap;
+    }
+
+    .proof-icon,
+    .round-icon,
+    .quick-icon,
+    .phone-step-icon {
+      display: grid;
+      place-items: center;
+      color: #ffffff;
+      background: linear-gradient(145deg, var(--blue), #2aa7ff);
+      box-shadow: 0 10px 18px rgba(18, 103, 241, 0.20);
+      font-weight: 900;
+    }
+
+    .proof-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 12px;
+      font-size: 11px;
+      flex: 0 0 auto;
+    }
+
+    .proof-icon.green,
+    .round-icon.green,
+    .quick-icon.green,
+    .phone-step-icon.green {
+      background: linear-gradient(145deg, var(--green), #32d18e);
+      box-shadow: 0 10px 18px rgba(18, 183, 106, 0.18);
+    }
+
+    .proof-icon.cyan {
+      background: linear-gradient(145deg, #06aed4, #39c6ef);
+      box-shadow: 0 10px 18px rgba(6, 174, 212, 0.18);
+    }
+
+    .tiny-pill,
+    .ok-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-height: 25px;
+      padding: 0 9px;
+      border: 1px solid rgba(18, 183, 106, 0.22);
+      border-radius: 999px;
+      color: var(--green-deep);
+      background: var(--green-soft);
+      font-size: 12px;
+      font-weight: 760;
+      white-space: nowrap;
+    }
+
+    .proof-kpis {
+      display: grid;
+      align-content: start;
+      gap: 6px;
+      color: #344054;
+      font-size: 13px;
+    }
+
+    .proof-kpis b {
+      color: #1d2939;
+      font-weight: 760;
+    }
+
+    .spark {
+      height: 38px;
+      display: flex;
+      align-items: end;
+      gap: 5px;
+    }
+
+    .spark i {
+      flex: 1;
+      min-width: 4px;
+      height: calc(var(--h) * 1%);
+      border-radius: 999px 999px 3px 3px;
+      background: linear-gradient(180deg, rgba(18, 103, 241, 0.96), rgba(18, 103, 241, 0.20));
+    }
+
+    .spark.green i {
+      background: linear-gradient(180deg, rgba(18, 183, 106, 0.96), rgba(18, 183, 106, 0.18));
+    }
+
+    .spark.cyan i {
+      background: linear-gradient(180deg, rgba(6, 174, 212, 0.96), rgba(6, 174, 212, 0.20));
+    }
+
+    .line-chart {
+      width: 100%;
+      height: 38px;
+      display: block;
+      color: var(--blue);
+    }
+
+    .line-chart.green {
+      color: var(--green);
+    }
+
+    .line-chart .area {
+      fill: currentColor;
+      opacity: 0.10;
+    }
+
+    .line-chart .line {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .line-chart .point {
+      fill: currentColor;
+    }
+
+    .work-grid {
+      display: grid;
+      grid-template-columns: 1.02fr 0.94fr 1.02fr;
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .work-grid > .card {
+      height: 416px;
+    }
+
+    .card {
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .card-title {
+      min-height: 50px;
+      padding: 15px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 680;
+    }
+
+    .chat-panel {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+    }
+
+    .chat-body {
+      display: grid;
+      grid-template-columns: 126px minmax(0, 1fr);
+      min-height: 0;
+    }
+
+    .script-list {
+      border-right: 1px solid var(--line-soft);
+      background: linear-gradient(180deg, #ffffff, #fbfdff);
+    }
+
+    .script-list h3 {
+      margin: 16px 14px 12px;
+      font-size: 13px;
+      font-weight: 780;
+    }
+
+    .script-btn {
+      width: 100%;
+      min-height: 44px;
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #344054;
+      background: transparent;
+      border-top: 1px solid var(--line-soft);
+      font-size: 12px;
+      font-weight: 650;
+      text-align: left;
+    }
+
+    .play-dot {
+      width: 16px;
+      height: 16px;
+      display: grid;
+      place-items: center;
+      border: 1px solid #9ec0ff;
+      border-radius: 50%;
+      color: var(--blue);
+      font-size: 8px;
+      flex: 0 0 auto;
+    }
+
+    .add-script {
+      color: var(--blue);
+      border-bottom: 1px solid var(--line-soft);
+    }
+
+    .chat-room {
+      padding: 16px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 13px;
+      overflow: auto;
+      background: #ffffff;
+    }
+
+    .bubble {
+      max-width: 100%;
+      padding: 12px 13px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      color: #344054;
+      background: #fbfdff;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .bubble.user {
+      align-self: flex-end;
+      color: #ffffff;
+      border-color: transparent;
+      background: linear-gradient(135deg, var(--blue), #0a55d9);
+      box-shadow: 0 12px 24px rgba(18, 103, 241, 0.18);
+    }
+
+    .wave-row {
+      margin-top: 12px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--blue);
+    }
+
+    .wave-row i {
+      width: 3px;
+      height: calc(var(--h) * 1px);
+      border-radius: 99px;
+      background: currentColor;
+      opacity: 0.85;
+    }
+
+    .composer {
+      padding: 14px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 44px;
+      gap: 10px;
+      border-top: 1px solid var(--line-soft);
+    }
+
+    .send-btn {
+      height: 42px;
+      border-radius: 12px;
+      color: #ffffff;
+      background: var(--blue);
+      font-weight: 800;
+      box-shadow: 0 12px 24px rgba(18, 103, 241, 0.18);
+    }
+
+    .loop-panel {
+      min-height: 0;
+    }
+
+    .loop-body {
+      height: 100%;
+      padding: 16px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 15px;
+    }
+
+    .loop-icons {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      align-items: start;
+      gap: 10px;
+    }
+
+    .loop-step {
+      position: relative;
+      display: grid;
+      justify-items: center;
+      gap: 8px;
+      text-align: center;
+    }
+
+    .loop-step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      top: 23px;
+      left: calc(50% + 27px);
+      width: calc(100% - 44px);
+      height: 1.5px;
+      background: linear-gradient(90deg, var(--blue), var(--green));
+      opacity: 0.6;
+    }
+
+    .round-icon {
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      font-size: 18px;
+    }
+
+    .loop-step strong {
+      font-size: 13px;
+    }
+
+    .loop-step span {
+      color: var(--green-deep);
+      font-size: 12px;
+      font-weight: 760;
+    }
+
+    .loop-events {
+      display: grid;
+      align-content: start;
+      grid-auto-rows: max-content;
+      gap: 10px;
+      padding: 0 2px;
+    }
+
+    .event-row,
+    .action-row {
+      display: grid;
+      grid-template-columns: 18px 1fr auto auto;
+      gap: 9px;
+      align-items: center;
+      color: #344054;
+      font-size: 12px;
+    }
+
+    .event-row {
+      grid-template-columns: 18px 1fr auto;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 4px rgba(18, 183, 106, 0.12);
+    }
+
+    .dot.blue {
+      background: var(--blue);
+      box-shadow: 0 0 0 4px rgba(18, 103, 241, 0.10);
+    }
+
+    .dot.orange {
+      background: var(--orange);
+      box-shadow: 0 0 0 4px rgba(247, 144, 9, 0.13);
+    }
+
+    .ready-banner {
+      min-height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border-radius: 10px;
+      color: var(--green-deep);
+      background: var(--green-soft);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .sensor-panel {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 0;
+    }
+
+    .sensor-body {
+      padding: 12px;
+      display: grid;
+      gap: 9px;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 9px;
+    }
+
+    .metric {
+      min-height: 66px;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: linear-gradient(180deg, #ffffff, #fbfdff);
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 680;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 6px;
+      font-size: 16px;
+      line-height: 1.16;
+      font-weight: 840;
+      overflow-wrap: anywhere;
+    }
+
+    .metric .mini-spark {
+      height: 13px;
+      margin-top: 6px;
+      display: flex;
+      align-items: end;
+      gap: 3px;
+      color: var(--green);
+    }
+
+    .metric .mini-spark.blue { color: var(--blue); }
+    .metric .mini-spark.orange { color: var(--orange); }
+
+    .metric .mini-spark i {
+      flex: 1;
+      height: calc(var(--h) * 1%);
+      border-radius: 99px;
+      background: currentColor;
+      opacity: 0.82;
+    }
+
+    .hardware-card {
+      padding: 11px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #ffffff;
+    }
+
+    .hardware-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 9px;
+    }
+
+    .tool-card {
+      min-height: 43px;
+      padding: 8px;
+      display: grid;
+      grid-template-columns: 26px 1fr auto;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      color: #1d2939;
+      background: #fbfdff;
+      font-size: 13px;
+      font-weight: 800;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .tool-icon {
+      width: 26px;
+      height: 26px;
+      display: grid;
+      place-items: center;
+      border-radius: 9px;
+      color: var(--blue);
+      background: #eaf2ff;
+      font-size: 13px;
+    }
+
+    .tool-card small {
+      padding: 3px 7px;
+      border-radius: 999px;
+      color: var(--green-deep);
+      background: var(--green-soft);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .tool-card.warn small {
+      color: #c4320a;
+      background: #fff4ed;
+    }
+
+    .bottom-grid {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .bottom-card {
+      height: 248px;
+      min-height: 0;
+      padding: 15px;
+      display: grid;
+      align-content: start;
+      gap: 12px;
+      background: linear-gradient(180deg, #ffffff, #fbfdff);
+    }
+
+    .mini-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 16px;
+      font-weight: 820;
+    }
+
+    .info-box {
+      padding: 11px;
+      display: grid;
+      gap: 6px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: #ffffff;
+      min-height: 0;
+    }
+
+    .info-box span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 680;
+    }
+
+    .info-box strong {
+      font-size: 17px;
+      line-height: 1.2;
+      overflow-wrap: anywhere;
+    }
+
+    .form-stack {
+      display: grid;
+      gap: 9px;
+    }
+
+    .hidden-form {
+      display: none;
+    }
+
+    .light-btn,
+    .primary-btn {
+      min-height: 38px;
+      border-radius: 10px;
+      font-weight: 800;
+    }
+
+    .light-btn {
+      border: 1px solid #b9d3ff;
+      color: var(--blue);
+      background: #f6faff;
+    }
+
+    .primary-btn {
+      color: #ffffff;
+      background: var(--blue);
+      box-shadow: 0 10px 22px rgba(18, 103, 241, 0.16);
+    }
+
+    .action-list {
+      display: grid;
+      gap: 11px;
+    }
+
+    .action-row {
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line-soft);
+      grid-template-columns: 13px 1fr auto auto;
+    }
+
+    .action-row:last-child {
+      border-bottom: 0;
+    }
+
+    .success-text {
+      color: var(--green-deep);
+      font-weight: 800;
+    }
+
+    .diag-row {
+      display: grid;
+      grid-template-columns: 1fr auto 76px;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 0;
+      color: #344054;
+      font-size: 12px;
+    }
+
+    .diag-spark {
+      height: 20px;
+      display: flex;
+      align-items: end;
+      gap: 3px;
+      color: var(--blue);
+    }
+
+    .diag-spark i {
+      width: 7px;
+      height: calc(var(--h) * 1%);
+      border-radius: 99px;
+      background: currentColor;
+      opacity: 0.75;
+    }
+
+    pre {
+      min-height: 0;
+      max-height: 0;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      border: 0;
+      color: transparent;
+      background: transparent;
+      font-size: 0;
+    }
+
+    .diag-ok {
+      margin-top: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--green-deep);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .phone-shell {
+      min-height: 970px;
+      margin-top: 72px;
+      padding: 18px 14px 14px;
+      border: 1px solid rgba(216, 226, 239, 0.96);
+      border-radius: 28px;
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .phone-head {
+      height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      font-weight: 820;
+      font-size: 14px;
+    }
+
+    .phone-actions {
+      position: absolute;
+      right: 0;
+      display: flex;
+      gap: 8px;
+    }
+
+    .phone-dot-btn {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      background: #ffffff;
+      color: #101828;
+      font-weight: 900;
+    }
+
+    .phone-content {
+      display: grid;
+      gap: 12px;
+      padding-top: 10px;
+    }
+
+    .phone-card {
+      padding: 14px;
+      border-radius: 14px;
+      background: #ffffff;
+    }
+
+    .phone-ready h2 {
+      margin: 0 0 14px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--green-deep);
+      font-size: 22px;
+      line-height: 1.1;
+    }
+
+    .phone-flow {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      align-items: center;
+    }
+
+    .phone-step {
+      display: grid;
+      justify-items: center;
+      gap: 7px;
+      color: #101828;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .phone-step-icon {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      font-size: 13px;
+    }
+
+    .quick-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      text-align: center;
+    }
+
+    .quick-item {
+      min-width: 0;
+      display: grid;
+      justify-items: center;
+      gap: 9px;
+      color: #344054;
+      background: transparent;
+      font-size: 12px;
+      font-weight: 760;
+    }
+
+    .quick-icon {
+      width: 52px;
+      height: 52px;
+      border-radius: 18px;
+      color: var(--green-deep);
+      background: #effbf5;
+      box-shadow: none;
+      border: 1px solid #d8f3e5;
+      font-size: 23px;
+    }
+
+    .quick-icon.blue {
+      color: var(--blue);
+      border-color: #d7e7ff;
+      background: #eff5ff;
+    }
+
+    .quick-icon.purple {
+      color: var(--purple);
+      border-color: #e7e0ff;
+      background: #f5f1ff;
+    }
+
+    .phone-metric-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 9px;
+    }
+
+    .phone-metric {
+      min-height: 78px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: #ffffff;
+    }
+
+    .phone-metric span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 680;
+    }
+
+    .phone-metric strong {
+      display: block;
+      margin-top: 8px;
+      font-size: 18px;
+      line-height: 1.1;
+    }
+
+    .phone-chat {
+      display: grid;
+      gap: 11px;
+    }
+
+    .phone-bubble {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      color: #344054;
+      background: #fbfdff;
+      font-size: 12px;
+    }
+
+    .phone-bubble.user {
+      justify-self: end;
+      color: #ffffff;
+      background: var(--blue);
+      border-color: transparent;
+    }
+
+    .phone-composer {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 40px;
+      gap: 9px;
+    }
+
+    .phone-tabbar {
+      height: 58px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      align-items: center;
+      text-align: center;
+      color: #667085;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .phone-tabbar span:first-child {
+      color: var(--blue);
+    }
+
+    .hide-mobile-json {
+      display: none;
+    }
+
+    @media (max-width: 1260px) {
+      .workspace {
+        grid-template-columns: 1fr;
+      }
+
+      .phone-shell {
+        margin-top: 0;
+        max-width: 390px;
+        justify-self: center;
+      }
+    }
+
+    @media (max-width: 980px) {
+      .workspace {
+        width: min(100% - 18px, 620px);
+      }
+
+      .desktop-shell {
+        grid-template-columns: 1fr;
+        border-radius: 22px;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .main-console {
+        padding: 16px;
+      }
+
+      .console-head {
+        flex-direction: column;
+      }
+
+      .proof-strip,
+      .work-grid,
+      .bottom-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .chat-body {
+        grid-template-columns: 1fr;
+      }
+
+      .script-list {
+        display: none;
+      }
+
+      .metric-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    /* realtime-integrity-overrides */
+    html { scroll-behavior: smooth; }
+    .nav-item { width: 100%; border: 0; background: transparent; text-align: left; }
+    .nav-item:focus-visible { outline: 3px solid rgba(18, 103, 241, 0.18); outline-offset: 2px; }
+    .proof-card { position: relative; }
+    .trend-caption { color: var(--subtle); font-size: 11px; font-weight: 650; }
+    .empty-state { min-height: 76px; display: grid; place-items: center; padding: 18px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); background: #fbfdff; font-size: 12px; text-align: center; }
+    .data-note { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .bottom-card { height: auto; min-height: 286px; }
+    .bottom-grid { align-items: stretch; }
+    .bottom-card .form-stack { display: grid; gap: 8px; }
+    .button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .info-box.compact { min-height: 104px; }
+    .metric strong.is-missing, .phone-metric strong.is-missing { color: var(--subtle); font-size: 13px; font-weight: 700; }
+    .step-pending .round-icon, .step-pending .phone-step-icon { color: #667085; background: #eef2f6; box-shadow: none; }
+    .step-error .round-icon, .step-error .phone-step-icon { color: #b42318; background: #fff1f0; box-shadow: none; }
+    .diag-value { color: #1d2939; font-weight: 800; }
+    .diag-value.ok { color: var(--green-deep); }
+    .diag-value.bad { color: #b42318; }
+    .phone-chat-log { display: grid; gap: 10px; }
+    .phone-live-label { color: var(--muted); font-size: 11px; font-weight: 700; }
+    .operation-feedback { min-height: 18px; color: var(--muted); font-size: 12px; }
+    .sensor-body { align-content: start; }
+    .work-grid > .card { height: auto; min-height: 416px; }
+    @media (max-width: 980px) {
+      .bottom-card { min-height: 0; }
+      .button-row { grid-template-columns: 1fr; }
+    }
+    .bad-text { color: #d92d20; font-weight: 800; }
+    .loop-step.waiting .round-icon { color: #667085; background: #f2f4f7; }
+    .loop-step.bad .round-icon { color: #d92d20; background: #fee4e2; }  </style>
+</head>
+<body>
+  <div class="workspace">
+    <section class="desktop-shell">
+      <aside class="sidebar">
+        <div>
+          <div class="side-brand"><div class="brand-mark">AI</div><div><strong>智能桌面 AI 终端</strong><span>实时运行控制台</span></div></div>
+          <nav class="nav-list" aria-label="主导航">
+            <button class="nav-item active" data-target="overview" type="button"><span class="nav-icon">□</span><span>总览</span></button>
+            <button class="nav-item" data-target="chat" type="button"><span class="nav-icon">··</span><span>AI 对话</span></button>
+            <button class="nav-item" data-target="hardware" type="button"><span class="nav-icon">⌘</span><span>硬件控制</span></button>
+            <button class="nav-item" data-target="sensors" type="button"><span class="nav-icon">◇</span><span>传感器</span></button>
+            <button class="nav-item" data-target="loop" type="button"><span class="nav-icon">↔</span><span>闭环链路</span></button>
+            <button class="nav-item" data-target="rfid" type="button"><span class="nav-icon">▣</span><span>RFID</span></button>
+            <button class="nav-item" data-target="asr" type="button"><span class="nav-icon">♬</span><span>ASR 上传</span></button>
+            <button class="nav-item" data-target="history" type="button"><span class="nav-icon">≡</span><span>日志与历史</span></button>
+            <button class="nav-item" data-target="diagnostics-card" type="button"><span class="nav-icon">⚙</span><span>诊断</span></button>
+          </nav>
+        </div>
+        <div class="system-card">
+          <h3>系统状态</h3>
+          <div class="ready-row"><strong id="system-ready-text">等待刷新</strong><span id="system-ready-mark" class="tiny-pill warn">…</span></div>
+          <div class="status-line"><span>WebSocket</span><button class="status-value" id="connect" type="button">连接 WS</button></div>
+          <div class="status-line"><span>后端服务</span><span class="status-value" id="backend-status">未检查</span></div><div class="status-line"><span>控制口令</span><input id="control-token" type="password" placeholder="公网控制口令"></div>
+          <div class="status-line"><span>设备运行</span><span id="uptime">未上报</span></div>
+          <button class="refresh-btn" id="refresh" type="button">刷新状态</button>
+        </div>
+      </aside>
+      <main class="main-console">
+        <header class="console-head"><div class="console-title"><h1>智能桌面 AI 终端</h1><p>真实传感器、动作 ACK、RFID 与 ASR 事件</p></div><div class="head-actions"><span id="data-mode-pill" class="pill">等待实时数据</span><div class="timebox"><strong id="clock-time">--:--:--</strong><span id="clock-date">----</span></div></div></header>
+        <section id="overview" class="proof-section">
+          <div class="section-head"><h2>实时链路状态</h2></div>
+          <div class="proof-strip">
+            <article class="proof-card"><div class="proof-top"><div class="proof-title"><span class="proof-icon">AI</span><span>云端 AI</span></div><span id="proof-ai-status" class="tiny-pill warn">未检查</span></div><div class="proof-kpis"><span>模型：<b id="proof-ai-model">未配置</b></span><span>刷新耗时：<b id="proof-ai-latency">暂无采样</b></span></div><div id="chart-ai" class="line-chart"></div></article>
+            <article class="proof-card"><div class="proof-top"><div class="proof-title"><span class="proof-icon green">ESP</span><span>ESP32S3</span></div><span id="proof-edge-status" class="tiny-pill warn">未连接</span></div><div class="proof-kpis"><span>Wi-Fi：<b id="proof-wifi">未上报</b></span><span>温度：<b id="proof-edge-temp">未上报</b></span></div><div id="chart-edge" class="line-chart green"></div></article>
+            <article class="proof-card"><div class="proof-top"><div class="proof-title"><span class="proof-icon">ACK</span><span>STM32 ACK</span></div><span id="proof-ack-status" class="tiny-pill warn">暂无 ACK</span></div><div class="proof-kpis"><span>最近延迟：<b id="proof-ack-latency">暂无统计</b></span><span>成功率：<b id="proof-ack-rate">暂无统计</b></span></div><div id="chart-ack" class="line-chart green"></div></article>
+            <article class="proof-card"><div class="proof-top"><div class="proof-title"><span class="proof-icon cyan">SEN</span><span>传感器</span></div><span id="proof-sensor-status" class="tiny-pill warn">等待上报</span></div><div class="proof-kpis"><span>已上报：<b id="proof-sensor-online">0/6</b></span><span>待处理：<b id="proof-sensor-alerts">0</b></span></div><div id="chart-sensor" class="spark cyan"></div></article>
+          </div>
+        </section>
+        <section class="work-grid">
+          <article id="chat" class="card chat-panel">
+            <div class="card-title"><h2>AI 对话</h2><span id="voice-pill" class="muted">语音识别 空闲中</span></div>
+            <div class="chat-body"><div class="script-list"><h3>快捷指令</h3><button class="script-btn" data-prompt="打开风扇并播报当前温度" type="button"><span class="play-dot">▶</span>打开风扇并播报温度</button><button class="script-btn" data-prompt="门锁解锁并播报" type="button"><span class="play-dot">▶</span>门锁解锁并播报</button><button class="script-btn" data-prompt="读取 RFID 并记录" type="button"><span class="play-dot">▶</span>读取 RFID 并记录</button><button class="script-btn" data-prompt="环境状态总览" type="button"><span class="play-dot">▶</span>环境状态总览</button></div><div id="chat-log" class="chat-room" aria-live="polite"></div></div>
+            <form id="chat-form" class="composer"><input id="chat-input" autocomplete="off" placeholder="输入指令或问题，Enter 发送"><button class="send-btn" type="submit">➤</button></form>
+          </article>
+          <article id="loop" class="card loop-panel"><div class="card-title"><h2>闭环链路（实时）</h2><span id="loop-ready-pill" class="tiny-pill warn">等待数据</span></div><div class="loop-body"><div id="loop-steps" class="loop-icons"></div><div id="loop-events" class="loop-events"></div><div class="ready-banner"><span id="loop-score">0%</span><span id="loop-summary">等待真实输入、执行与 ACK</span></div></div></article>
+          <article id="sensors" class="card sensor-panel"><div class="card-title"><h2>传感器仪表盘</h2><span id="sensor-meta" class="muted">等待上报</span></div><div class="sensor-body"><div id="sensor-metrics" class="metric-grid"></div><div id="hardware" class="hardware-card"><div class="mini-title"><span>硬件控制</span><span id="hardware-meta" class="muted">直连动作接口</span></div><div class="hardware-grid"><button class="tool-card" data-tool="fan_on" type="button"><span class="tool-icon">风</span><span>风扇开启</span><small>action</small></button><button class="tool-card" data-tool="fan_off" type="button"><span class="tool-icon">停</span><span>风扇关闭</span><small>action</small></button><button class="tool-card" data-tool="beep" type="button"><span class="tool-icon">声</span><span>蜂鸣提醒</span><small>action</small></button><button class="tool-card warn" data-tool="lock" type="button"><span class="tool-icon">锁</span><span>锁定</span><small>action</small></button><button class="tool-card" data-tool="unlock" type="button"><span class="tool-icon">开</span><span>解锁</span><small>action</small></button></div></div></div></article>
+        </section>
+        <section class="bottom-grid">
+          <article id="rfid" class="bottom-card"><div class="mini-title"><span>RFID 读取</span><span id="rfid-status-pill" class="tiny-pill warn">暂无记录</span></div><div id="rfid-current" class="info-box"></div><form id="rfid-form" class="form-stack"><input id="rfid-uid" placeholder="UID，例如 04A1B2C3" autocomplete="off"><input id="rfid-name" placeholder="用户名（注册时使用）" autocomplete="off"><select id="rfid-mode"><option value="study">study</option><option value="rest">rest</option><option value="admin">admin</option></select><div class="button-row"><button class="light-btn" id="rfid-register" type="submit">注册卡片</button><button class="light-btn" id="rfid-scan" type="button">提交 UID</button></div></form></article>
+          <article id="asr" class="bottom-card"><div class="mini-title"><span>ASR 语音上传</span><span id="asr-status-pill" class="tiny-pill warn">暂无记录</span></div><div id="asr-current" class="info-box"></div><form id="asr-form" class="form-stack"><input id="asr-file" type="file" accept="audio/*"><button class="light-btn" type="submit">上传录音文件</button></form></article>
+          <article id="history" class="bottom-card"><div class="mini-title"><span>最近动作</span><span class="muted">来自诊断接口</span></div><div id="action-list" class="action-list"></div></article>
+          <article id="diagnostics-card" class="bottom-card"><div class="mini-title"><span>链路诊断</span><span id="diagnostics-meta" class="muted">JSON</span></div><div id="diagnostics-list"></div><pre id="diagnostics">{}</pre></article>
+        </section>
+      </main>
+    </section>
+    <aside class="phone-shell"><div class="phone-head">智能桌面 AI 终端<div class="phone-actions"><button class="phone-dot-btn" type="button">••</button><button class="phone-dot-btn" type="button">○</button></div></div><div class="phone-content"><section class="phone-card phone-ready"><h2 id="phone-ready-title"><span class="phone-step-icon green">…</span>等待刷新</h2><div id="phone-flow" class="phone-flow"></div></section><section class="phone-card"><div class="mini-title"><span>快捷操作</span></div><div class="quick-grid"><button class="quick-item" data-tool="fan_on" type="button"><span class="quick-icon">风</span><span>打开风扇</span></button><button class="quick-item" data-tool="unlock" type="button"><span class="quick-icon">锁</span><span>门锁解锁</span></button><button class="quick-item" id="phone-rfid-focus" type="button"><span class="quick-icon blue">卡</span><span>RFID</span></button><button class="quick-item" id="voice-toggle" type="button"><span class="quick-icon purple">麦</span><span>语音输入</span></button></div></section><section class="phone-card"><div class="mini-title"><span>传感器状态</span><span id="phone-sensor-status" class="muted">等待上报</span></div><div id="phone-metric-grid" class="phone-metric-grid"></div></section><section class="phone-card phone-chat"><div class="mini-title"><span>AI 对话</span></div><div id="phone-chat-log"></div><form id="phone-chat-form" class="phone-composer"><input id="phone-chat-input" placeholder="输入指令..."><button class="send-btn" type="submit">➤</button></form></section></div><nav class="phone-tabbar"><span>首页</span><span>控制</span><span>对话</span><span>我的</span></nav></aside>
+  </div>
+  <script>
+    const deviceId = "desktop-agent-001";
+    const EMPTY = "未上报", NONE = "暂无记录", NO_STATS = "暂无统计";
+    const MAX_POINTS = 18;
+    const history = {refreshMs: [], temp: [], ackMs: [], sensors: []};
+    let ws = null, recognition = null, voiceActive = false;
+    let currentDialogue = [], localEvents = [];
+    const $ = (id) => document.getElementById(id);
+    const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+    const has = (v) => v !== undefined && v !== null && v !== "";
+    const text = (id, value) => { const el = $(id); if (el) el.textContent = value; };
+    const cls = (id, value) => { const el = $(id); if (el) el.className = value; };
+    const pill = (id, label, kind = "") => { text(id, label); cls(id, kind ? `tiny-pill ${kind}` : "tiny-pill"); };
+    const sensorValue = (v, unit = "") => has(v) ? `${v}${unit}` : EMPTY;
+    const pct = (ok, total) => total ? `${Math.round((ok / total) * 100)}%` : NO_STATS;
+    const t = (value) => { if (!value) return "暂无"; const d = value instanceof Date ? value : new Date(value); if (Number.isNaN(d.getTime())) return String(value); const p = (n) => String(n).padStart(2, "0"); return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
+    const dur = (ms) => { if (!Number.isFinite(Number(ms))) return EMPTY; const s = Math.max(0, Math.floor(Number(ms) / 1000)); const p = (n) => String(n).padStart(2, "0"); return `${p(Math.floor(s / 3600))}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`; };
+    const filename = (path) => path ? String(path).split(/[\\/]/).pop() : EMPTY;
+    const shortId = (v) => v ? (String(v).length > 14 ? `${String(v).slice(0, 14)}...` : String(v)) : "-";
+    const controlToken = () => localStorage.getItem("controlToken") || "";
+    const authHeaders = () => controlToken() ? {"X-Demo-Token": controlToken()} : {};
+    const api = (path, options = {}) => fetch(path, {headers: {"Content-Type": "application/json", ...authHeaders(), ...(options.headers || {})}, ...options}).then(async (res) => { const data = await res.json(); if (!res.ok) throw new Error(data.detail || res.statusText); return data; });
+    const push = (key, value) => { if (!Number.isFinite(Number(value))) return; history[key].push(Number(value)); if (history[key].length > MAX_POINTS) history[key].shift(); };
+    const sensorsOf = (s = {}) => {
+      const items = [
+        {label:"温度", present:s.aht20_ok === true && has(s.temperature_c), value:s.aht20_ok === true ? sensorValue(s.temperature_c, " C") : EMPTY, tone:"green"},
+        {label:"湿度", present:s.aht20_ok === true && has(s.humidity_pct), value:s.aht20_ok === true ? sensorValue(s.humidity_pct, " %") : EMPTY, tone:"blue"},
+        {label:"距离", present:has(s.distance_cm) || has(s.distance_ok), value:s.distance_enabled === false ? "未启用" : (s.distance_ok === true ? sensorValue(s.distance_cm, " cm") : EMPTY), tone:"green"},
+        {label:"电位器", present:has(s.pot_raw), value:has(s.pot_raw) ? `${s.pot_raw}${has(s.pot_pct) ? ` / ${s.pot_pct}%` : ""}` : EMPTY, tone:"blue"},
+        {label:"NTC", present:has(s.ntc_raw), value:has(s.ntc_raw) ? `${s.ntc_raw}${has(s.ntc_pct) ? ` / ${s.ntc_pct}%` : ""}` : EMPTY, tone:"orange"},
+        {label:"编码器", present:has(s.encoder_position), value:has(s.encoder_position) ? `${s.encoder_position} (${Number(s.encoder_delta || 0) >= 0 ? "+" : ""}${s.encoder_delta || 0})` : EMPTY, tone:"blue"},
+      ];
+      return {items, count: items.filter((item) => item.present).length, total: items.length};
+    };
+    const ackLatency = (d = {}) => { const a = (d.recent_actions || []).slice().reverse().find((x) => x.sent_at && x.acked_at); if (!a) return null; const ms = new Date(a.acked_at).getTime() - new Date(a.sent_at).getTime(); return Number.isFinite(ms) && ms >= 0 ? Math.round(ms) : null; };
+    const miniSpark = (values, tone = "") => { const nums = values.filter((v) => Number.isFinite(Number(v))).slice(-6); if (!nums.length) return `<span class="muted">等待采样</span>`; const min = Math.min(...nums), max = Math.max(...nums), range = Math.max(1, max - min); return `<div class="mini-spark ${tone}">${nums.map((v) => `<i style="--h:${24 + Math.round(((v - min) / range) * 52)}"></i>`).join("")}</div>`; };
+    const line = (id, values, tone = "") => { const el = $(id); if (!el) return; const nums = values.filter((v) => Number.isFinite(Number(v))).slice(-MAX_POINTS); if (nums.length < 2) { el.innerHTML = `<span class="muted">等待采样</span>`; return; } const w = 190, h = 42, min = Math.min(...nums), max = Math.max(...nums), range = Math.max(1, max - min); const pts = nums.map((v, i) => [Math.round(4 + i * (w - 8) / (nums.length - 1)), Math.round(36 - ((v - min) / range) * 26)]); const d = pts.map((p, i) => `${i ? "L" : "M"}${p[0]} ${p[1]}`).join(" "); const area = `${d} L${pts[pts.length - 1][0]} ${h} L${pts[0][0]} ${h} Z`; const last = pts[pts.length - 1]; el.innerHTML = `<svg class="line-chart ${tone}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><path class="area" d="${area}"></path><path class="line" d="${d}"></path><circle class="point" cx="${last[0]}" cy="${last[1]}" r="3"></circle></svg>`; };
+    const bars = (values) => { const el = $("chart-sensor"); if (!el) return; const nums = values.filter((v) => Number.isFinite(Number(v))).slice(-15); if (!nums.length) { el.innerHTML = `<span class="muted">等待采样</span>`; return; } const max = Math.max(1, ...nums); el.innerHTML = nums.map((v) => `<i style="--h:${18 + Math.round((v / max) * 64)}"></i>`).join(""); };
+    const clock = () => { const now = new Date(); const p = (n) => String(n).padStart(2, "0"); text("clock-time", `${p(now.getHours())}:${p(now.getMinutes())}:${p(now.getSeconds())}`); text("clock-date", `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`); };
+    const renderLogs = () => {
+      const turns = currentDialogue.slice(-8).map((x) => ({role:x.role, text:x.text, time:x.time})).concat(localEvents.slice(-4));
+      const make = (turn, phone = false) => { const div = document.createElement("div"); const user = turn.role === "user"; div.className = phone ? `phone-bubble ${user ? "user" : ""}` : `bubble ${user ? "user" : "system"}`; div.textContent = turn.time ? `${turn.text}  ${t(turn.time)}` : turn.text; return div; };
+      [[$("chat-log"), false], [$("phone-chat-log"), true]].forEach(([el, phone]) => { if (!el) return; el.innerHTML = ""; if (!turns.length) { const empty = document.createElement("div"); empty.className = phone ? "phone-bubble" : "bubble system"; empty.textContent = "等待真实对话记录"; el.appendChild(empty); } else { turns.slice(phone ? -4 : -12).forEach((turn) => el.appendChild(make(turn, phone))); } el.scrollTop = el.scrollHeight; });
+    };
+    const local = (message, role = "system") => { localEvents.push({role, text:message, time:new Date().toISOString()}); if (localEvents.length > 12) localEvents.shift(); renderLogs(); };
+    const statusText = (s) => ({queued:"排队", sent:"已发送", acked:"ACK OK", failed:"ACK ERR"}[s] || s || "未知");
+    const actionTime = (a) => t(a.acked_at || a.sent_at || a.created_at);
+    const renderLoopEvents = (diag = {}) => { const actions = (diag.recent_actions || []).slice().reverse().slice(0, 4); const el = $("loop-events"); if (!actions.length) { el.innerHTML = `<div class="event-row"><span class="dot"></span><span>暂无动作记录</span><span>--</span></div>`; return; } el.innerHTML = actions.map((a) => `<div class="event-row"><span class="dot"></span><span>${statusText(a.status)} · ${a.type}</span><span>${actionTime(a)}</span></div>`).join(""); };
+    const renderLoop = (health, state, diag, ready, waiting) => {
+      const turns = state.recent_dialogue || [], latest = (diag.recent_actions || []).slice().reverse()[0];
+      const hasUser = turns.some((x) => x.role === "user") || has(state.last_text) || has(state.last_asr_text);
+      const hasAssistant = turns.some((x) => x.role === "assistant") || has(state.last_assistant);
+      const sent = latest && ["sent", "acked", "failed"].includes(latest.status), acked = latest && latest.status === "acked", failed = latest && latest.status === "failed";
+      const steps = [{icon:"入", title:"用户输入", state:hasUser ? "已接收" : "等待输入", ok:hasUser}, {icon:"AI", title:"AI 回复", state:hasAssistant ? "已生成" : "等待生成", ok:hasAssistant}, {icon:"芯", title:"STM32 执行", state:sent ? "已下发" : (latest ? "排队中" : "暂无动作"), ok:Boolean(sent)}, {icon:failed ? "!" : "✓", title:"ACK", state:acked ? "已确认" : (failed ? "失败" : "等待 ACK"), ok:Boolean(acked), bad:Boolean(failed)}];
+      $("loop-steps").innerHTML = steps.map((s) => `<div class="loop-step ${s.ok ? "" : (s.bad ? "bad" : "waiting")}"><span class="round-icon ${s.ok ? "green" : ""}">${s.icon}</span><strong>${s.title}</strong><span>${s.state}</span></div>`).join("");
+      const score = Math.round(steps.filter((s) => s.ok).length / steps.length * 100);
+      text("loop-score", `${score}%`); text("loop-summary", ready ? "真实闭环完整，当前可展示" : (waiting ? "后端和云端正常，等待硬件上报或 ACK" : "等待真实数据补齐闭环"));
+      pill("loop-ready-pill", ready ? "闭环就绪" : (waiting ? "待确认" : "需处理"), ready ? "ok" : (waiting ? "warn" : "bad"));
+      text("phone-ready-title", `${ready ? "✓" : (waiting ? "…" : "!")} ${ready ? "闭环就绪" : (waiting ? "待确认" : "需处理")}`);
+      $("phone-flow").innerHTML = steps.map((s) => `<div class="phone-step"><span class="phone-step-icon ${s.ok ? "green" : ""}">${s.icon}</span><span>${s.title}</span></div>`).join("");
+      renderLoopEvents(diag);
+    };
+    const renderSystem = (health, state, diag) => {
+      const s = state.sensors || {}, info = sensorsOf(s), cloud = health.cloud_ready === true, device = state.online === true && state.session_connected === true, uart = state.uart_ok === true, ackErr = state.ack_err_count || 0, pending = state.pending_action_count || 0;
+      const ready = cloud && device && uart && ackErr === 0 && pending === 0 && info.count > 0, waiting = cloud && state.online && ackErr === 0;
+      text("system-ready-text", ready ? "闭环就绪" : (waiting ? "待确认" : "需处理")); pill("system-ready-mark", ready ? "✓" : (waiting ? "…" : "!"), ready ? "ok" : (waiting ? "warn" : "bad")); text("backend-status", "正常"); text("uptime", has(s.uptime_ms) ? dur(s.uptime_ms) : EMPTY); text("data-mode-pill", `实时数据 · ${t(new Date())}`); renderLoop(health, state, diag, ready, waiting);
+    };
+    const renderProof = (health, state, diag, refreshMs) => {
+      const s = state.sensors || {}, info = sensorsOf(s), total = (state.ack_ok_count || 0) + (state.ack_err_count || 0), ms = ackLatency(diag);
+      push("refreshMs", refreshMs); if (s.aht20_ok === true && has(s.temperature_c)) push("temp", s.temperature_c); if (ms !== null) push("ackMs", ms); push("sensors", info.count);
+      pill("proof-ai-status", health.cloud_ready === true ? "在线" : "未就绪", health.cloud_ready === true ? "ok" : "warn"); text("proof-ai-model", health.ai_model || (health.ai_provider || "未配置")); text("proof-ai-latency", `${Math.max(1, Math.round(refreshMs))} ms`);
+      pill("proof-edge-status", state.online && state.session_connected ? "在线" : "离线", state.online && state.session_connected ? "ok" : "bad"); text("proof-wifi", has(s.wifi_rssi_dbm) ? `${s.wifi_rssi_dbm} dBm` : EMPTY); text("proof-edge-temp", s.aht20_ok === true ? sensorValue(s.temperature_c, " C") : EMPTY);
+      pill("proof-ack-status", total ? ((state.ack_err_count || 0) ? "有错误" : "有 ACK") : "暂无 ACK", total ? ((state.ack_err_count || 0) ? "warn" : "ok") : "warn"); text("proof-ack-latency", ms === null ? NO_STATS : `${ms} ms`); text("proof-ack-rate", pct(state.ack_ok_count || 0, total));
+      pill("proof-sensor-status", info.count ? "已上报" : "等待上报", info.count ? "ok" : "warn"); text("proof-sensor-online", `${info.count}/${info.total}`); text("proof-sensor-alerts", String((state.pending_action_count || 0) + (state.ack_err_count || 0) + (s.last_asr_error ? 1 : 0)));
+      line("chart-ai", history.refreshMs); line("chart-edge", history.temp, "green"); line("chart-ack", history.ackMs, "green"); bars(history.sensors);
+    };
+    const renderSensors = (state) => { const info = sensorsOf(state.sensors || {}); text("sensor-meta", `已上报 ${info.count}/${info.total}`); text("phone-sensor-status", `已上报 ${info.count}/${info.total}`); $("sensor-metrics").innerHTML = info.items.map((item) => `<div class="metric"><span>${item.label}</span><strong>${item.value}</strong>${miniSpark(item.present && item.label === "温度" ? history.temp : [], item.tone)}</div>`).join(""); $("phone-metric-grid").innerHTML = info.items.map((item) => `<div class="phone-metric"><span>${item.label}</span><strong>${item.value}</strong></div>`).join(""); };
+    const renderActions = (diag = {}) => { const actions = (diag.recent_actions || []).slice().reverse().slice(0, 6); const el = $("action-list"); if (!actions.length) { el.innerHTML = `<div class="action-row"><span class="dot"></span><span>暂无动作记录</span><span>--</span><span>${NO_STATS}</span></div>`; return; } el.innerHTML = actions.map((a) => `<div class="action-row"><span class="dot"></span><span>${a.type}</span><span>${actionTime(a)}</span><span class="${a.status === "failed" ? "bad-text" : "success-text"}">${statusText(a.status)}</span></div>`).join(""); };
+    const renderRfid = (state) => { const s = state.sensors || {}, uid = s.last_rfid_uid, ok = s.last_rfid_authorized === true; pill("rfid-status-pill", uid ? (ok ? "已通过" : "已拒绝") : "暂无记录", uid ? (ok ? "ok" : "bad") : "warn"); $("rfid-current").innerHTML = `<span>最新 UID</span><strong>${uid || NONE}</strong><span class="tiny-pill ${uid ? (ok ? "ok" : "bad") : "warn"}">${uid ? (ok ? "授权通过" : "未授权") : "等待刷卡"}</span><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><span>时间</span><span>用户</span><strong style="font-size:14px">${t(s.last_rfid_at)}</strong><strong style="font-size:14px">${state.current_user ? `${state.current_user.name}/${state.current_user.mode}` : "暂无"}</strong></div>`; };
+    const renderAsr = (state) => { const s = state.sensors || {}, hasAudio = has(s.last_audio_path) || has(s.last_audio_bytes) || has(s.last_asr_provider), ok = s.last_asr_ok === true; pill("asr-status-pill", hasAudio ? (ok ? "识别成功" : "识别失败") : "暂无记录", hasAudio ? (ok ? "ok" : "bad") : "warn"); $("asr-current").innerHTML = `<span>最新录音</span><strong style="font-size:14px">${filename(s.last_audio_path)}</strong><span class="tiny-pill ${hasAudio ? (ok ? "ok" : "bad") : "warn"}">${hasAudio ? (ok ? "已识别" : "失败") : "等待上传"}</span><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><span>时间</span><span>来源</span><strong style="font-size:14px">${t(s.last_asr_at)}</strong><strong style="font-size:14px">${s.last_asr_provider || "暂无"}</strong></div>`; };
+    const renderDiag = (health, state, diag) => { const rows = [["云端 AI", health.cloud_ready === true ? (health.ai_model || "OK") : "未就绪"], ["设备会话", state.session_connected ? "已连接" : "未连接"], ["UART", state.uart_ok ? "OK" : "未确认"], ["执行队列", `${state.pending_action_count || 0} 个待 ACK`], ["最近 ACK", state.last_ack ? `${state.last_ack.ok ? "OK" : "ERR"} ${shortId(state.last_ack.action_id)}` : "暂无"], ["最近上报", t(state.last_seen)]]; $("diagnostics-list").innerHTML = rows.map(([k, v]) => `<div class="diag-row"><span>${k}</span><strong>${v}</strong></div>`).join(""); text("diagnostics", JSON.stringify(diag, null, 2)); text("diagnostics-meta", `刷新 ${t(new Date())}`); };
+    const render = (health, state, diag, refreshMs) => { currentDialogue = state.recent_dialogue || []; renderSystem(health, state, diag); renderProof(health, state, diag, refreshMs); renderSensors(state); renderRfid(state); renderAsr(state); renderActions(diag); renderDiag(health, state, diag); renderLogs(); };
+    const refresh = async () => { const started = performance.now(); const [health, state, diag] = await Promise.all([api("/api/health"), api(`/api/state/${deviceId}`), api(`/api/realtime/diagnostics/${deviceId}`)]); render(health, state, diag, performance.now() - started); };
+    const connectWs = () => { if (ws && ws.readyState === WebSocket.OPEN) return; const proto = location.protocol === "https:" ? "wss" : "ws"; ws = new WebSocket(`${proto}://${location.host}/api/realtime/ws?device_id=${deviceId}`); ws.onopen = () => { text("connect", "已连接"); text("hardware-meta", "WS 已连接"); }; ws.onclose = () => { text("connect", "已断开"); text("hardware-meta", "WS 已断开"); }; ws.onerror = () => text("connect", "连接失败"); ws.onmessage = (event) => { try { const data = JSON.parse(event.data); if (data.type === "assistant" && data.text) local(data.text, "assistant"); if (data.type === "stm32/commands" && data.lines) local(data.lines.join("\n")); refresh().catch((err) => local(err.message)); } catch (err) { local(err.message); } }; };
+    const sendChat = async (raw) => { const clean = String(raw || "").trim(); if (!clean) return; local(clean, "user"); const data = await api("/api/chat", {method:"POST", body:JSON.stringify({device_id:deviceId, text:clean, source:"web_console"})}); local(data.reply, "assistant"); if (data.commands && data.commands.length) local(data.commands.join("\n")); await refresh(); };
+    const HW = {fan_on:{label:"打开风扇", type:"fan_control", payload:{state:"on", level:2}}, fan_off:{label:"关闭风扇", type:"fan_control", payload:{state:"off"}}, beep:{label:"蜂鸣提醒", type:"buzzer_alert", payload:{}}, lock:{label:"锁定", type:"lock_control", payload:{state:"on"}}, unlock:{label:"解锁", type:"lock_control", payload:{state:"off"}}};
+    const sendHardware = async (key) => { const spec = HW[key]; if (!spec) return; const data = await api("/api/hardware/action", {method:"POST", body:JSON.stringify({device_id:deviceId, type:spec.type, payload:spec.payload, mark_sent:true})}); local(`${spec.label}: ${data.commands.join(" / ") || "已入队"}`); await refresh(); };
+    const sendRecognized = async (raw) => { const clean = String(raw || "").trim(); if (!clean) return; const data = await api("/api/asr/recognized", {method:"POST", body:JSON.stringify({device_id:deviceId, text:clean, source:"browser_speech", inject:true})}); local(`ASR ${data.text}`); if (data.chat) local(data.chat.reply, "assistant"); await refresh(); };
+    const speech = () => { if (recognition) return recognition; const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) return null; recognition = new SR(); recognition.lang = "zh-CN"; recognition.continuous = false; recognition.interimResults = false; recognition.maxAlternatives = 1; recognition.onstart = () => { voiceActive = true; text("voice-pill", "语音识别 识别中"); }; recognition.onresult = (event) => { const value = (event.results?.[0]?.[0]?.transcript || "").trim(); if (!value) return local("语音识别结果为空"); local(value, "user"); sendRecognized(value).catch((err) => local(err.message)); }; recognition.onerror = (event) => local(event.error === "not-allowed" ? "浏览器未授予麦克风权限" : `语音识别失败: ${event.error}`); recognition.onend = () => { voiceActive = false; text("voice-pill", "语音识别 空闲中"); }; return recognition; };
+    $("chat-form").addEventListener("submit", (event) => { event.preventDefault(); const value = $("chat-input").value.trim(); if (!value) return; $("chat-input").value = ""; sendChat(value).catch((err) => local(err.message)); });
+    $("phone-chat-form").addEventListener("submit", (event) => { event.preventDefault(); const value = $("phone-chat-input").value.trim(); if (!value) return; $("phone-chat-input").value = ""; sendChat(value).catch((err) => local(err.message)); });
+    $("rfid-form").addEventListener("submit", async (event) => { event.preventDefault(); const uid = $("rfid-uid").value.trim().toUpperCase().replace(/[\s:-]+/g, ""); const name = $("rfid-name").value.trim() || uid; if (!uid) return local("请先输入 RFID UID"); const data = await api("/api/rfid/register", {method:"POST", body:JSON.stringify({device_id:deviceId, uid, name, mode:$("rfid-mode").value})}); local(`RFID 注册 ${data.user.uid} -> ${data.user.name}/${data.user.mode}`); await refresh(); });
+    $("rfid-scan").addEventListener("click", async () => { const uid = $("rfid-uid").value.trim().toUpperCase().replace(/[\s:-]+/g, ""); if (!uid) return local("请先输入 RFID UID"); const data = await api("/api/rfid/scan", {method:"POST", body:JSON.stringify({device_id:deviceId, uid})}); local(`${data.authorized ? "RFID OK" : "RFID DENY"} ${data.uid}`); if (data.commands && data.commands.length) local(data.commands.join("\n")); await refresh(); });
+    $("asr-form").addEventListener("submit", async (event) => { event.preventDefault(); const file = $("asr-file").files[0]; if (!file) return local("请选择真实录音文件"); const form = new FormData(); form.append("device_id", deviceId); form.append("inject", "true"); form.append("audio", file); const res = await fetch("/api/asr/transcribe", {method:"POST", headers: authHeaders(), body:form}); const data = await res.json(); if (!res.ok) throw new Error(data.detail || res.statusText); local(`ASR ${data.ok ? data.text : (data.error || "识别失败")}`); if (data.chat) local(data.chat.reply, "assistant"); await refresh(); });
+    $$("[data-tool]").forEach((button) => button.addEventListener("click", () => sendHardware(button.dataset.tool).catch((err) => local(err.message))));
+    $$("[data-prompt]").forEach((button) => button.addEventListener("click", () => sendChat(button.dataset.prompt).catch((err) => local(err.message))));
+    $$(".nav-item[data-target]").forEach((button) => button.addEventListener("click", () => { $$(".nav-item").forEach((item) => item.classList.remove("active")); button.classList.add("active"); const target = $(button.dataset.target); if (target) target.scrollIntoView({behavior:"smooth", block:"start"}); }));
+    $("refresh").addEventListener("click", () => refresh().catch((err) => local(err.message)));
+    $("connect").addEventListener("click", connectWs);
+    $("phone-rfid-focus").addEventListener("click", () => $("rfid").scrollIntoView({behavior:"smooth", block:"start"}));
+    $("voice-toggle").addEventListener("click", () => { const rec = speech(); if (!rec) return local("当前浏览器不支持 Web Speech API，请使用 ASR 上传"); if (voiceActive) rec.stop(); else rec.start(); });
+    $("control-token").value = controlToken();
+    $("control-token").addEventListener("change", () => { localStorage.setItem("controlToken", $("control-token").value.trim()); local("控制口令已保存"); });
+    setInterval(clock, 1000); clock(); renderLogs(); refresh().catch((err) => local(err.message));
+  </script>
+</body>
+</html>

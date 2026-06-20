@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: smart-desktop-ai-terminal
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: cd backend && pip install -r requirements.txt
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: AI_PROVIDER
+        value: dashscope_openai
+      - key: AI_MODEL
+        value: qwen-plus
+      - key: ASR_PROVIDER
+        value: dashscope_paraformer
+      - key: RFID_REGISTRY_PATH
+        value: /tmp/smart-desktop-rfid-users.json
+      - key: DASHSCOPE_API_KEY
+        sync: false
+      - key: CONTROL_TOKEN
+        sync: false
