@@ -20,7 +20,7 @@
         <text>{{summary.readyCloudText}}</text>
       </view>
       <view class="status-chip">
-        <text>WS</text>
+        <text>设备链路</text>
         <text>{{summary.sessionText}}</text>
       </view>
       <view class="status-chip">

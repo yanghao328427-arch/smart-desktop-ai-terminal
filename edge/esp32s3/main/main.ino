@@ -9,6 +9,14 @@
 #include <WebSocketsClient.h>
 #include <WiFi.h>
 
+#if __has_include("local_config.h")
+#include "local_config.h"
+#endif
+
+#ifndef SMARTDESK_BOOTSTRAP_SERVER_URL
+#define SMARTDESK_BOOTSTRAP_SERVER_URL ""
+#endif
+
 static const char *DEVICE_ID = "desktop-agent-001";
 static const char *EDGE_ID = "esp32s3-sense-001";
 
@@ -300,6 +308,22 @@ void sendAckToBackend(const String &line) {
   }
 }
 
+bool isAllowedTelemetryKey(const char *key) {
+  static const char *ALLOWED_KEYS[] = {
+      "pot_raw",          "pot_pct",          "ntc_raw",          "ntc_pct",
+      "tracking_signal",  "aht20_ok",         "temperature_c",    "humidity_pct",
+      "distance_ok",      "distance_enabled", "distance_cm",      "distance_zone",
+      "env_state",        "interaction_hint", "rgb_mode",         "rgb_status",
+      "rgb_reason",       "encoder_delta",    "encoder_position", "encoder_button",
+  };
+  for (const char *allowed : ALLOWED_KEYS) {
+    if (strcmp(key, allowed) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void sendTelemetryToBackend(String line) {
   line.trim();
   if (line.startsWith("BT:")) {
@@ -322,10 +346,13 @@ void sendTelemetryToBackend(String line) {
   doc["edge_id"] = EDGE_ID;
   doc["voice_state"] = voiceState;
   JsonObject sensors = doc["sensors"].to<JsonObject>();
+  if (WiFi.status() == WL_CONNECTED) {
+    sensors["wifi_rssi_dbm"] = WiFi.RSSI();
+  }
   JsonObject sourceObject = source.as<JsonObject>();
   for (JsonPair kv : sourceObject) {
     const char *key = kv.key().c_str();
-    if (strcmp(key, "device_id") != 0) {
+    if (isAllowedTelemetryKey(key)) {
       sensors[key] = kv.value();
     }
   }
@@ -1525,6 +1552,11 @@ void setup() {
   initMicrophone();
 
   loadConfig();
+  if (strlen(SMARTDESK_BOOTSTRAP_SERVER_URL) > 0 && parseServerUrl(SMARTDESK_BOOTSTRAP_SERVER_URL)) {
+    saveConfig();
+    Serial.print("[CFG] bootstrap server=");
+    Serial.println(httpBase());
+  }
   connectWifi();
   startWebSocket();
 }

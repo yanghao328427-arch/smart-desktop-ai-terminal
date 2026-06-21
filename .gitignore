@@ -20,6 +20,7 @@ dist/
 node_modules/
 .env
 project.private.config.json
+edge/esp32s3/main/local_config.h
 output/
 *.docx
 backend/data/*.json
