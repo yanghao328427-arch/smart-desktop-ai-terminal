@@ -1,6 +1,6 @@
 ---
 title: Smart Desktop AI Terminal
-emoji: desktop_computer
+emoji: 🖥️
 colorFrom: blue
 colorTo: green
 sdk: docker
