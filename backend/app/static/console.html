@@ -1448,8 +1448,8 @@
       renderLoopEvents(diag);
     };
     const renderSystem = (health, state, diag) => {
-      const s = state.sensors || {}, info = sensorsOf(s), cloud = health.cloud_ready === true, device = state.online === true && state.session_connected === true, uart = state.uart_ok === true, ackErr = state.ack_err_count || 0, pending = state.pending_action_count || 0;
-      const ready = cloud && device && uart && ackErr === 0 && pending === 0 && info.count > 0, waiting = cloud && state.online && ackErr === 0;
+      const s = state.sensors || {}, info = sensorsOf(s), cloud = health.cloud_ready === true, device = state.online === true && state.session_connected === true, uart = state.uart_ok === true, ackErr = state.ack_err_count || 0, pending = state.pending_action_count || 0, ackVerified = state.last_ack && state.last_ack.ok === true;
+      const ready = cloud && device && uart && ackVerified && ackErr === 0 && pending === 0 && info.count > 0, waiting = cloud && state.online && ackErr === 0;
       text("system-ready-text", ready ? "闭环就绪" : (waiting ? "待确认" : "需处理")); pill("system-ready-mark", ready ? "✓" : (waiting ? "…" : "!"), ready ? "ok" : (waiting ? "warn" : "bad")); text("backend-status", "正常"); text("uptime", has(s.uptime_ms) ? dur(s.uptime_ms) : EMPTY); text("data-mode-pill", `实时数据 · ${t(new Date())}`); renderLoop(health, state, diag, ready, waiting);
     };
     const renderProof = (health, state, diag, refreshMs) => {

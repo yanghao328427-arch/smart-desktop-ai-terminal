@@ -83,22 +83,24 @@ function buildSummary(state, status, health) {
   const lastAudioName = lastAudioPath ? String(lastAudioPath).split(/[\\/]/).pop() : "-";
   const cloudOk = safeHealth.cloud_ready === true;
   const deviceOk = safeState.online && safeState.session_connected && safeState.uart_ok;
-  const ackOk = (safeState.ack_err_count || 0) === 0;
+  const lastAck = safeState.last_ack;
+  const ackOk = Boolean(lastAck && lastAck.ok === true);
+  const ackClean = (safeState.ack_err_count || 0) === 0;
   const queueOk = (safeState.pending_action_count || 0) === 0;
   const encoderOk = sensors.encoder_position !== undefined;
   const sensorOk = sensors.aht20_ok === true || sensors.pot_raw !== undefined || encoderOk;
-  const ready = cloudOk && deviceOk && ackOk && queueOk && sensorOk;
-  const waiting = cloudOk && safeState.online && ackOk && queueOk;
+  const ready = cloudOk && deviceOk && ackOk && ackClean && queueOk && sensorOk;
+  const waiting = cloudOk && safeState.online && ackClean && queueOk && !ready;
 
   return {
     protocolText: safeStatus.protocol || "-",
     aiText: cloudOk ? `${safeHealth.ai_provider}/${safeHealth.ai_model}` : "本地规则",
-    readyText: `云端 ${cloudOk ? "OK" : "未就绪"} · 设备 ${deviceOk ? "在线" : "未连接"} · UART ${safeState.uart_ok ? "OK" : "未确认"} · ACK ${ackOk ? "OK" : "异常"} · 传感器 ${sensorOk ? "有上报" : "等待上报"}`,
+    readyText: `云端 ${cloudOk ? "OK" : "未就绪"} · 设备 ${deviceOk ? "在线" : "未连接"} · UART ${safeState.uart_ok ? "OK" : "未确认"} · ACK ${lastAck ? (ackOk ? "OK" : "异常") : "待验证"} · 传感器 ${sensorOk ? "有上报" : "等待上报"}`,
     readyScore: ready ? "闭环就绪" : (waiting ? "待确认" : "需处理"),
     readyClass: ready ? "ready ok" : (waiting ? "ready warn" : "ready bad"),
     readyCloudText: cloudOk ? (safeHealth.ai_model || "OK") : "未就绪",
     readyDeviceText: deviceOk ? "在线 / UART OK" : "检查连接",
-    readyAckText: ackOk ? `${safeState.ack_ok_count || 0} 个成功` : `${safeState.ack_err_count || 0} 个错误`,
+    readyAckText: !lastAck ? "等待真实 ACK" : (ackOk ? `${safeState.ack_ok_count || 0} 个成功` : `${safeState.ack_err_count || 0} 个错误`),
     readyQueueText: queueOk ? "无待执行" : `${safeState.pending_action_count || 0} 个待 ACK`,
     connectionText: String(safeStatus.connection_count || 0),
     onlineText: safeState.online ? "在线" : "离线",
