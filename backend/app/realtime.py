@@ -13,20 +13,43 @@ class ConnectionManager:
     def __init__(self, store: RuntimeStore) -> None:
         self._store = store
         self._connections: dict[str, set[WebSocket]] = defaultdict(set)
+        self._device_connections: dict[str, set[WebSocket]] = defaultdict(set)
         self._lock = asyncio.Lock()
 
-    async def connect(self, websocket: WebSocket, device_id: str, edge_id: str | None) -> None:
+    async def connect(
+        self,
+        websocket: WebSocket,
+        device_id: str,
+        edge_id: str | None,
+        *,
+        track_device_session: bool = True,
+    ) -> None:
         await websocket.accept()
         async with self._lock:
             self._connections[device_id].add(websocket)
-            self._store.set_session_connected(device_id, edge_id, True)
+            if track_device_session:
+                self._device_connections[device_id].add(websocket)
+                self._store.set_session_connected(device_id, edge_id, True)
 
-    async def disconnect(self, websocket: WebSocket, device_id: str, edge_id: str | None) -> None:
+    async def disconnect(
+        self,
+        websocket: WebSocket,
+        device_id: str,
+        edge_id: str | None,
+        *,
+        track_device_session: bool = True,
+    ) -> None:
         async with self._lock:
             self._connections[device_id].discard(websocket)
             if not self._connections[device_id]:
                 self._connections.pop(device_id, None)
-                self._store.set_session_connected(device_id, edge_id, False)
+            if track_device_session:
+                self._device_connections[device_id].discard(websocket)
+                if not self._device_connections[device_id]:
+                    self._device_connections.pop(device_id, None)
+                    self._store.set_session_connected(device_id, edge_id, False)
+            elif not self._device_connections.get(device_id):
+                self._device_connections.pop(device_id, None)
 
     async def broadcast(self, device_id: str, message: dict[str, Any]) -> int:
         async with self._lock:

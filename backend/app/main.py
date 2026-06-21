@@ -519,8 +519,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return console()
 
     @app.websocket("/api/realtime/ws")
-    async def realtime_ws(websocket: WebSocket, device_id: str = settings.device_id, edge_id: str = settings.edge_id):
-        await manager.connect(websocket, device_id, edge_id)
+    async def realtime_ws(websocket: WebSocket, device_id: str = settings.device_id, edge_id: str | None = None):
+        track_device_session = edge_id == settings.edge_id
+        await manager.connect(websocket, device_id, edge_id, track_device_session=track_device_session)
         try:
             await websocket.send_json(
                 {
@@ -539,7 +540,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     continue
                 await handle_ws_message(websocket, payload, device_id)
         except WebSocketDisconnect:
-            await manager.disconnect(websocket, device_id, edge_id)
+            await manager.disconnect(websocket, device_id, edge_id, track_device_session=track_device_session)
 
     async def handle_ws_message(websocket: WebSocket, payload: dict[str, Any], device_id: str) -> None:
         message_type = payload.get("type")

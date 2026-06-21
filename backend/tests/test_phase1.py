@@ -470,6 +470,17 @@ def test_websocket_text_loop_sends_protocol_events():
     assert diagnostics["state"]["pending_action_count"] == len(diagnostics["sent_actions"])
 
 
+def test_ui_websocket_does_not_mark_edge_session_connected():
+    client = make_client()
+
+    with client.websocket_connect("/api/realtime/ws?device_id=desktop-agent-001") as ws:
+        hello = ws.receive_json()
+        assert hello["type"] == "hello"
+
+        diagnostics = client.get("/api/realtime/diagnostics/desktop-agent-001").json()
+        assert diagnostics["state"]["session_connected"] is False
+
+
 def test_realtime_inject_uses_same_text_loop():
     client = make_client()
 

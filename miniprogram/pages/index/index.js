@@ -48,6 +48,14 @@ function normalizeApiBase(value) {
   return String(value || "").trim().replace(/\/+$/, "");
 }
 
+function buildWebSocketUrl(apiBase, deviceId) {
+  const base = normalizeApiBase(apiBase);
+  if (!base) return "";
+  const wsBase = base.replace(/^https:\/\//, "wss://").replace(/^http:\/\//, "ws://");
+  if (!/^wss?:\/\//.test(wsBase)) return "";
+  return `${wsBase}/api/realtime/ws?device_id=${encodeURIComponent(deviceId)}`;
+}
+
 function normalizeUid(value) {
   return String(value || "").trim().toUpperCase().replace(/[\s:-]+/g, "");
 }
@@ -168,7 +176,8 @@ Page({
     diagnosticsText: "{}",
     summary: DEFAULT_SUMMARY,
     recentActions: [],
-    refreshTime: "-"
+    refreshTime: "-",
+    socketText: "WS 未连接"
   },
 
   onLoad() {
@@ -176,15 +185,21 @@ Page({
   },
 
   onShow() {
+    this.socketWanted = true;
+    this.connectRealtimeSocket();
     this.startAutoRefresh();
     this.refreshState({ quiet: true });
   },
 
   onHide() {
+    this.socketWanted = false;
+    this.closeRealtimeSocket();
     this.stopAutoRefresh();
   },
 
   onUnload() {
+    this.socketWanted = false;
+    this.closeRealtimeSocket();
     this.stopAutoRefresh();
   },
 
@@ -242,6 +257,8 @@ Page({
     wx.setStorageSync("apiBase", apiBase);
     app.globalData.apiBase = apiBase;
     this.toast("已保存");
+    this.closeRealtimeSocket();
+    this.connectRealtimeSocket();
     this.refreshState();
   },
 
@@ -284,6 +301,83 @@ Page({
     if (!this.refreshTimer) return;
     clearInterval(this.refreshTimer);
     this.refreshTimer = null;
+  },
+
+  connectRealtimeSocket() {
+    if (this.socketTask || !this.socketWanted) return;
+    const url = buildWebSocketUrl(this.data.apiBase, this.data.deviceId);
+    if (!url) {
+      this.setData({ socketText: "WS 地址无效" });
+      return;
+    }
+    const task = wx.connectSocket({ url });
+    this.socketTask = task;
+    this.setData({ socketText: "WS 连接中" });
+
+    task.onOpen(() => {
+      this.socketReconnectDelayMs = 1000;
+      this.setData({ socketText: "WS 已连接" });
+    });
+
+    task.onMessage((event) => {
+      try {
+        const message = JSON.parse(event.data);
+        if (message.state) {
+          this.setData({ state: message.state });
+        }
+        this.queueRealtimeRefresh();
+      } catch (error) {
+        this.queueRealtimeRefresh();
+      }
+    });
+
+    task.onError(() => {
+      this.setData({ socketText: "WS 异常，轮询兜底" });
+    });
+
+    task.onClose(() => {
+      if (this.socketTask && this.socketTask !== task) {
+        return;
+      }
+      this.socketTask = null;
+      this.setData({ socketText: this.socketWanted ? "WS 重连中" : "WS 已断开" });
+      if (this.socketWanted) {
+        this.scheduleSocketReconnect();
+      }
+    });
+  },
+
+  closeRealtimeSocket() {
+    if (this.socketReconnectTimer) {
+      clearTimeout(this.socketReconnectTimer);
+      this.socketReconnectTimer = null;
+    }
+    if (!this.socketTask) {
+      this.setData({ socketText: "WS 已断开" });
+      return;
+    }
+    const task = this.socketTask;
+    this.socketTask = null;
+    task.close({ code: 1000, reason: "page hidden" });
+    this.setData({ socketText: "WS 已断开" });
+  },
+
+  scheduleSocketReconnect() {
+    if (this.socketReconnectTimer) return;
+    const delay = this.socketReconnectDelayMs || 1000;
+    this.socketReconnectDelayMs = Math.min(delay * 2, 15000);
+    this.socketReconnectTimer = setTimeout(() => {
+      this.socketReconnectTimer = null;
+      this.connectRealtimeSocket();
+    }, delay);
+  },
+
+  queueRealtimeRefresh() {
+    if (this.realtimeRefreshTimer) return;
+    this.realtimeRefreshTimer = setTimeout(() => {
+      this.realtimeRefreshTimer = null;
+      this.refreshState({ quiet: true });
+    }, 150);
   },
 
   async refreshState(options = {}) {

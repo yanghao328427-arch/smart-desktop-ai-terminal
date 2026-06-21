@@ -1,0 +1,4 @@
+{$SMARTDESK_SITE_ADDRESS} {
+	encode gzip
+	reverse_proxy smartdesk:7860
+}

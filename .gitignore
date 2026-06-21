@@ -19,6 +19,7 @@ build/
 dist/
 node_modules/
 .env
+deploy/.env.server
 project.private.config.json
 edge/esp32s3/main/local_config.h
 output/

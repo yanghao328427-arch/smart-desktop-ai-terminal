@@ -39,7 +39,7 @@
       <input value="{{apiBase}}" placeholder="https://yh001399-smart-desktop-ai-terminal.hf.space" bindinput="onApiBaseInput" />
       <button size="mini" bindtap="saveApiBase">保存</button>
     </view>
-    <text class="helper">设备 {{deviceId}} · 协议 {{summary.protocolText}} · 连接数 {{summary.connectionText}}</text>
+    <text class="helper">设备 {{deviceId}} · 协议 {{summary.protocolText}} · {{socketText}} · 连接数 {{summary.connectionText}}</text>
   </view>
 
   <view class="panel connection-panel">
