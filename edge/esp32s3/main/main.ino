@@ -5,9 +5,11 @@
 #include <I2S.h>
 #include <MFRC522.h>
 #include <Preferences.h>
+#include <PubSubClient.h>
 #include <SPI.h>
 #include <WebSocketsClient.h>
 #include <WiFi.h>
+#include <mbedtls/md.h>
 
 #if __has_include("local_config.h")
 #include "local_config.h"
@@ -15,6 +17,30 @@
 
 #ifndef SMARTDESK_BOOTSTRAP_SERVER_URL
 #define SMARTDESK_BOOTSTRAP_SERVER_URL ""
+#endif
+
+#ifndef SMARTDESK_IOTDA_ENABLED
+#define SMARTDESK_IOTDA_ENABLED 0
+#endif
+
+#ifndef SMARTDESK_IOTDA_HOST
+#define SMARTDESK_IOTDA_HOST ""
+#endif
+
+#ifndef SMARTDESK_IOTDA_PORT
+#define SMARTDESK_IOTDA_PORT 8883
+#endif
+
+#ifndef SMARTDESK_IOTDA_DEVICE_ID
+#define SMARTDESK_IOTDA_DEVICE_ID ""
+#endif
+
+#ifndef SMARTDESK_IOTDA_SECRET
+#define SMARTDESK_IOTDA_SECRET ""
+#endif
+
+#ifndef SMARTDESK_IOTDA_TIMESTAMP
+#define SMARTDESK_IOTDA_TIMESTAMP "2026062100"
 #endif
 
 static const char *DEVICE_ID = "desktop-agent-001";
@@ -36,6 +62,14 @@ HardwareSerial stm32Rx(2);
 Preferences prefs;
 WebSocketsClient webSocket;
 MFRC522 rfid(RFID_SS_PIN, RFID_RST_PIN);
+#if SMARTDESK_IOTDA_ENABLED
+#if SMARTDESK_IOTDA_PORT == 1883
+WiFiClient iotdaClient;
+#else
+WiFiClientSecure iotdaClient;
+#endif
+PubSubClient iotdaMqtt(iotdaClient);
+#endif
 
 String wifiSsid;
 String wifiPassword;
@@ -55,6 +89,7 @@ unsigned long lastRfidMs = 0;
 unsigned long lastRfidSeenMs = 0;
 unsigned long lastCommandPollMs = 0;
 unsigned long lastWifiMissingLogMs = 0;
+unsigned long lastIotdaReconnectMs = 0;
 String lastRfidUid;
 String voiceState = "text_bridge";
 bool micReady = false;
@@ -63,6 +98,7 @@ bool micBusy = false;
 static const unsigned long UART_OK_WINDOW_MS = 15000;
 static const unsigned long UART_KEEPALIVE_INTERVAL_MS = 10000;
 static const unsigned long UART_TX_QUIET_MS = 7000;
+static const unsigned long COMMAND_POLL_INTERVAL_MS = 800;
 static const unsigned long RFID_POLL_INTERVAL_MS = 1000;
 static const unsigned long RFID_REPEAT_SUPPRESS_MS = 15000;
 static const unsigned long WIFI_CONNECT_TIMEOUT_MS = 30000;
@@ -205,6 +241,231 @@ void sendToStm32(const String &line, uint16_t postDelayMs = 80) {
   }
 }
 
+#if SMARTDESK_IOTDA_ENABLED
+String hmacSha256Hex(const String &key, const String &message) {
+  unsigned char digest[32];
+  const mbedtls_md_info_t *mdInfo = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  mbedtls_md_hmac(
+      mdInfo,
+      reinterpret_cast<const unsigned char *>(key.c_str()),
+      key.length(),
+      reinterpret_cast<const unsigned char *>(message.c_str()),
+      message.length(),
+      digest);
+
+  static const char *HEX_DIGITS = "0123456789abcdef";
+  String encoded;
+  encoded.reserve(64);
+  for (uint8_t value : digest) {
+    encoded += HEX_DIGITS[(value >> 4) & 0x0F];
+    encoded += HEX_DIGITS[value & 0x0F];
+  }
+  return encoded;
+}
+
+String iotdaDeviceId() {
+  return String(SMARTDESK_IOTDA_DEVICE_ID);
+}
+
+String iotdaPropertyReportTopic() {
+  return "$oc/devices/" + iotdaDeviceId() + "/sys/properties/report";
+}
+
+String iotdaCommandSubscribeTopic() {
+  return "$oc/devices/" + iotdaDeviceId() + "/sys/commands/#";
+}
+
+String iotdaCommandResponseTopic(const String &requestId) {
+  return "$oc/devices/" + iotdaDeviceId() + "/sys/commands/response/request_id=" + requestId;
+}
+
+bool isIotdaPropertyKey(const char *key) {
+  static const char *IOTDA_KEYS[] = {
+      "temperature_c",
+      "humidity_pct",
+      "distance_cm",
+      "pot_raw",
+      "ntc_raw",
+      "tracking_signal",
+      "wifi_rssi_dbm",
+      "aht20_ok",
+      "distance_ok",
+      "encoder_position",
+  };
+  for (const char *allowed : IOTDA_KEYS) {
+    if (strcmp(key, allowed) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+String commandFromIotda(const String &commandName, JsonObject paras, bool *accepted) {
+  *accepted = true;
+  if (commandName == "fan_control") {
+    String state = paras["state"] | "on";
+    state.toLowerCase();
+    if (state == "off" || state == "0" || state == "false") {
+      return "NET:FAN:OFF";
+    }
+    int level = paras["level"] | 2;
+    if (level < 1) level = 1;
+    if (level > 3) level = 3;
+    return "NET:FAN:ON:" + String(level);
+  }
+  if (commandName == "lock_control") {
+    String state = paras["state"] | "on";
+    state.toLowerCase();
+    if (state == "off" || state == "unlock" || state == "0" || state == "false") {
+      return "NET:LOCK:OFF";
+    }
+    return "NET:LOCK:ON";
+  }
+  if (commandName == "buzzer_alert") {
+    return "NET:BEEP";
+  }
+  if (commandName == "tts_speak") {
+    String text = paras["text"] | "";
+    if (text.length() == 0) {
+      *accepted = false;
+      return "";
+    }
+    return "NET:TTSHEX:" + utf8Hex(text);
+  }
+  if (commandName == "raw_stm32") {
+    String command = paras["command"] | "";
+    if (!command.startsWith("NET:")) {
+      *accepted = false;
+      return "";
+    }
+    return command;
+  }
+  *accepted = false;
+  return "";
+}
+
+void publishIotdaCommandResponse(const String &topic, bool accepted, const String &commandName) {
+  int requestPos = topic.indexOf("request_id=");
+  if (requestPos < 0 || !iotdaMqtt.connected()) {
+    return;
+  }
+  String requestId = topic.substring(requestPos + strlen("request_id="));
+  JsonDocument response;
+  response["result_code"] = accepted ? 0 : 1;
+  response["response_name"] = "smartdesk_response";
+  JsonObject paras = response["paras"].to<JsonObject>();
+  paras["accepted"] = accepted;
+  paras["command_name"] = commandName;
+  String payload;
+  serializeJson(response, payload);
+  iotdaMqtt.publish(iotdaCommandResponseTopic(requestId).c_str(), payload.c_str());
+}
+
+void iotdaCallback(char *topic, byte *payload, unsigned int length) {
+  String text;
+  text.reserve(length + 1);
+  for (unsigned int i = 0; i < length; i++) {
+    text += static_cast<char>(payload[i]);
+  }
+
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, text);
+  if (error) {
+    Serial.print("[IOTDA] bad command json: ");
+    Serial.println(error.c_str());
+    publishIotdaCommandResponse(String(topic), false, "");
+    return;
+  }
+
+  String commandName = doc["command_name"] | "";
+  JsonObject paras = doc["paras"].as<JsonObject>();
+  bool accepted = false;
+  String stm32Command = commandFromIotda(commandName, paras, &accepted);
+  if (accepted && stm32Command.length() > 0) {
+    sendToStm32("NET:UI:ACTION", 0);
+    sendToStm32(stm32Command);
+  }
+  publishIotdaCommandResponse(String(topic), accepted, commandName);
+}
+
+bool ensureIotdaMqttConnected() {
+  if (strlen(SMARTDESK_IOTDA_HOST) == 0 || strlen(SMARTDESK_IOTDA_DEVICE_ID) == 0 ||
+      strlen(SMARTDESK_IOTDA_SECRET) == 0) {
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    return false;
+  }
+  if (iotdaMqtt.connected()) {
+    return true;
+  }
+  if (millis() - lastIotdaReconnectMs < 5000) {
+    return false;
+  }
+  lastIotdaReconnectMs = millis();
+
+#if SMARTDESK_IOTDA_PORT != 1883
+  iotdaClient.setInsecure();
+#endif
+  iotdaMqtt.setServer(SMARTDESK_IOTDA_HOST, SMARTDESK_IOTDA_PORT);
+  iotdaMqtt.setCallback(iotdaCallback);
+  iotdaMqtt.setBufferSize(1024);
+  iotdaMqtt.setKeepAlive(120);
+
+  String deviceId = iotdaDeviceId();
+  String timestamp = SMARTDESK_IOTDA_TIMESTAMP;
+  String clientId = deviceId + "_0_0_" + timestamp;
+  String password = hmacSha256Hex(timestamp, SMARTDESK_IOTDA_SECRET);
+
+  Serial.print("[IOTDA] connecting ");
+  Serial.println(SMARTDESK_IOTDA_HOST);
+  bool ok = iotdaMqtt.connect(clientId.c_str(), deviceId.c_str(), password.c_str());
+  if (!ok) {
+    Serial.print("[IOTDA] connect failed state=");
+    Serial.println(iotdaMqtt.state());
+    return false;
+  }
+  Serial.println("[IOTDA] connected");
+  iotdaMqtt.subscribe(iotdaCommandSubscribeTopic().c_str());
+  return true;
+}
+
+void iotdaLoop() {
+  if (ensureIotdaMqttConnected()) {
+    iotdaMqtt.loop();
+  }
+}
+
+void publishTelemetryToIotda(JsonObject sensors) {
+  if (!ensureIotdaMqttConnected()) {
+    return;
+  }
+
+  JsonDocument report;
+  JsonArray services = report["services"].to<JsonArray>();
+  JsonObject service = services.add<JsonObject>();
+  service["service_id"] = "smartdesk";
+  JsonObject properties = service["properties"].to<JsonObject>();
+  bool hasProperties = false;
+  for (JsonPair kv : sensors) {
+    const char *key = kv.key().c_str();
+    if (isIotdaPropertyKey(key)) {
+      properties[key] = kv.value();
+      hasProperties = true;
+    }
+  }
+  if (!hasProperties) {
+    return;
+  }
+
+  String payload;
+  serializeJson(report, payload);
+  bool ok = iotdaMqtt.publish(iotdaPropertyReportTopic().c_str(), payload.c_str());
+  Serial.print("[IOTDA] property report ");
+  Serial.println(ok ? "ok" : "failed");
+}
+#endif
+
 bool postJson(const String &path, const String &body, String *responseOut = nullptr) {
   if (WiFi.status() != WL_CONNECTED || serverHost.isEmpty()) {
     return false;
@@ -278,7 +539,7 @@ void forwardCommandsFromJson(const String &jsonText) {
 }
 
 void pollBackendCommands() {
-  if (wsConnected || millis() - lastCommandPollMs < 2000) {
+  if (wsConnected || millis() - lastCommandPollMs < COMMAND_POLL_INTERVAL_MS) {
     return;
   }
   lastCommandPollMs = millis();
@@ -359,6 +620,9 @@ void sendTelemetryToBackend(String line) {
 
   String body;
   serializeJson(doc, body);
+#if SMARTDESK_IOTDA_ENABLED
+  publishTelemetryToIotda(sensors);
+#endif
   postJson("/api/hardware/telemetry", body);
 }
 
@@ -1295,6 +1559,43 @@ void scanWifi() {
   }
 }
 
+void probeTcp(String target) {
+  target.trim();
+  int colon = target.lastIndexOf(':');
+  if (colon <= 0 || colon >= (int)target.length() - 1) {
+    Serial.println("[NET] use CFG:NET:TCP:<host>:<port>");
+    return;
+  }
+
+  String host = target.substring(0, colon);
+  uint16_t port = (uint16_t)target.substring(colon + 1).toInt();
+  String localIp = WiFi.localIP().toString();
+  String gatewayIp = WiFi.gatewayIP().toString();
+  String dnsIp = WiFi.dnsIP().toString();
+  Serial.printf("[NET] probe host=%s port=%u wifi=%d rssi=%d local=%s gateway=%s dns=%s\n",
+                host.c_str(),
+                port,
+                (int)WiFi.status(),
+                WiFi.RSSI(),
+                localIp.c_str(),
+                gatewayIp.c_str(),
+                dnsIp.c_str());
+
+  IPAddress ip;
+  if (WiFi.hostByName(host.c_str(), ip)) {
+    String resolved = ip.toString();
+    Serial.printf("[NET] resolved %s -> %s\n", host.c_str(), resolved.c_str());
+  } else {
+    Serial.printf("[NET] resolve failed %s\n", host.c_str());
+  }
+
+  WiFiClient probeClient;
+  probeClient.setTimeout(5000);
+  bool ok = probeClient.connect(host.c_str(), port);
+  Serial.printf("[NET] tcp %s\n", ok ? "ok" : "failed");
+  probeClient.stop();
+}
+
 void handleSerialCommand(String line) {
   line.trim();
   if (line.isEmpty()) {
@@ -1328,6 +1629,11 @@ void handleSerialCommand(String line) {
         startWebSocket();
       }
     }
+    return;
+  }
+
+  if (line.startsWith("CFG:NET:TCP:")) {
+    probeTcp(line.substring(strlen("CFG:NET:TCP:")));
     return;
   }
 
@@ -1571,6 +1877,9 @@ void loop() {
     connectWifi();
     startWebSocket();
   }
+#if SMARTDESK_IOTDA_ENABLED
+  iotdaLoop();
+#endif
   pollBackendCommands();
   sendUartKeepalive();
   sendHeartbeat();
