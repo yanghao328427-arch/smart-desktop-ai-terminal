@@ -76,7 +76,6 @@ function buildSummary(state, status, health) {
   const safeHealth = health || {};
   const sensors = safeState.sensors || {};
   const currentUser = safeState.current_user;
-  const lastAck = safeState.last_ack;
   const lastRfidUid = sensors.last_rfid_uid;
   const lastRfidAuthorized = sensors.last_rfid_authorized;
   const lastAudioPath = sensors.last_audio_path || "";
