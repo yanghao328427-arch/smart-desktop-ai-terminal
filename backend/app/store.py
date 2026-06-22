@@ -32,6 +32,9 @@ def uart_safe_action_order(specs: list[ActionSpec]) -> list[ActionSpec]:
     return [spec for spec in specs if spec.type != "tts_speak"] + [spec for spec in specs if spec.type == "tts_speak"]
 
 
+DEVICE_ONLINE_TTL_SECONDS = 30
+
+
 class RuntimeStore:
     def __init__(
         self,
@@ -90,10 +93,13 @@ class RuntimeStore:
     def set_session_connected(self, device_id: str, edge_id: str | None, connected: bool) -> DeviceSnapshot:
         with self._lock:
             device = self.ensure_device(device_id, edge_id)
+            stamp = now_utc()
             device.session_connected = connected
             device.online = connected
             device.state = DeviceRunState.idle if connected else DeviceRunState.offline
-            device.last_seen = now_utc()
+            device.last_seen = stamp
+            if connected:
+                self._mark_device_seen(device, stamp)
             self._refresh_counts(device.device_id)
             return device
 
@@ -109,14 +115,18 @@ class RuntimeStore:
     ) -> DeviceSnapshot:
         with self._lock:
             device = self.ensure_device(device_id, edge_id)
+            stamp = now_utc()
             device.online = online
             device.uart_ok = uart_ok
             device.voice_state = voice_state
-            device.last_seen = now_utc()
+            device.last_seen = stamp
+            device.device_last_seen = stamp
+            device.device_age_seconds = 0.0
             device.sensors["uptime_ms"] = uptime_ms
             if online and device.state == DeviceRunState.offline:
                 device.state = DeviceRunState.idle
             if not online:
+                device.session_connected = False
                 device.state = DeviceRunState.offline
             self._refresh_counts(device.device_id)
             return device
@@ -131,6 +141,7 @@ class RuntimeStore:
     ) -> DeviceSnapshot:
         with self._lock:
             device = self.ensure_device(device_id, edge_id)
+            stamp = now_utc()
             if sensors.get("distance_enabled") is False:
                 sensors["distance_ok"] = False
                 sensors.pop("distance_cm", None)
@@ -142,7 +153,8 @@ class RuntimeStore:
             if voice_state is not None:
                 device.voice_state = voice_state
             device.online = True
-            device.last_seen = now_utc()
+            device.last_seen = stamp
+            self._mark_device_seen(device, stamp)
             if device.state == DeviceRunState.offline:
                 device.state = DeviceRunState.idle
             self._refresh_counts(device.device_id)
@@ -173,11 +185,13 @@ class RuntimeStore:
         with self._lock:
             user = self._rfid_users.get(normalized_uid)
             device = self.ensure_device(device_id)
+            stamp = now_utc()
             device.online = True
-            device.last_seen = now_utc()
+            device.last_seen = stamp
+            self._mark_device_seen(device, stamp)
             device.sensors["last_rfid_uid"] = normalized_uid
             device.sensors["last_rfid_authorized"] = bool(user)
-            device.sensors["last_rfid_at"] = now_utc().isoformat()
+            device.sensors["last_rfid_at"] = stamp.isoformat()
             if device.state == DeviceRunState.offline:
                 device.state = DeviceRunState.idle
             if user:
@@ -205,7 +219,6 @@ class RuntimeStore:
             device.last_speech = (speech or reply).strip() or None
             self._append_dialogue_turn(device, "user", text, source)
             self._append_dialogue_turn(device, "assistant", reply, source)
-            device.online = True
             device.last_seen = now_utc()
             self._refresh_counts(device.device_id)
             return device
@@ -220,9 +233,11 @@ class RuntimeStore:
         ok: bool,
         provider: str | None = None,
         error: str | None = None,
+        hardware_seen: bool = False,
     ) -> DeviceSnapshot:
         with self._lock:
             device = self.ensure_device(device_id)
+            stamp = now_utc()
             device.last_asr_text = text
             if ok:
                 device.voice_state = "asr_ok"
@@ -235,9 +250,10 @@ class RuntimeStore:
             device.sensors["last_asr_ok"] = ok
             device.sensors["last_asr_provider"] = provider
             device.sensors["last_asr_error"] = error
-            device.sensors["last_asr_at"] = now_utc().isoformat()
-            device.online = True
-            device.last_seen = now_utc()
+            device.sensors["last_asr_at"] = stamp.isoformat()
+            device.last_seen = stamp
+            if hardware_seen:
+                self._mark_device_seen(device, stamp)
             self._refresh_counts(device.device_id)
             return device
 
@@ -266,6 +282,7 @@ class RuntimeStore:
     def pending_commands(self, device_id: str | None, *, mark_sent: bool) -> list[ActionRecord]:
         with self._lock:
             device = self.ensure_device(device_id)
+            self._mark_device_seen(device)
             actions = [action for action in self._actions[device.device_id] if action.status == ActionStatus.queued]
             if mark_sent:
                 self.mark_actions_sent([action.id for action in actions])
@@ -299,6 +316,7 @@ class RuntimeStore:
             action.acked_at = now_utc()
             action.error = None if ok else (error or "STM32 returned ERR")
             device = self.ensure_device(action.device_id)
+            self._mark_device_seen(device, action.acked_at)
             device.last_ack = {
                 "action_id": action.id,
                 "ok": ok,
@@ -311,7 +329,7 @@ class RuntimeStore:
             else:
                 device.ack_err_count += 1
                 device.state = DeviceRunState.error
-            device.last_seen = now_utc()
+            device.last_seen = action.acked_at
             self._refresh_counts(device.device_id)
             return action, device, ok
 
@@ -343,6 +361,31 @@ class RuntimeStore:
         device.pending_action_count = sum(
             1 for action in self._actions.get(device_id, []) if action.status in {ActionStatus.queued, ActionStatus.sent}
         )
+        self._apply_device_freshness(device)
+
+    def _mark_device_seen(self, device: DeviceSnapshot, stamp: datetime | None = None) -> None:
+        actual_stamp = stamp or now_utc()
+        device.device_last_seen = actual_stamp
+        device.device_age_seconds = 0.0
+        device.online = True
+        device.last_seen = actual_stamp
+
+    def _apply_device_freshness(self, device: DeviceSnapshot, stamp: datetime | None = None) -> None:
+        if device.device_last_seen is None:
+            device.device_age_seconds = None
+            if device.online:
+                device.online = False
+                device.session_connected = False
+                device.uart_ok = False
+            return
+
+        actual_stamp = stamp or now_utc()
+        age_seconds = max(0.0, (actual_stamp - device.device_last_seen).total_seconds())
+        device.device_age_seconds = round(age_seconds, 3)
+        if age_seconds > DEVICE_ONLINE_TTL_SECONDS:
+            device.online = False
+            device.session_connected = False
+            device.uart_ok = False
 
     def _append_dialogue_turn(self, device: DeviceSnapshot, role: str, text: str, source: str | None) -> None:
         message = text.strip()

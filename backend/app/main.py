@@ -147,6 +147,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ok=ok,
             provider=provider,
             error=error,
+            hardware_seen=source.startswith("esp32"),
         )
         await manager.broadcast(
             state.device_id,
@@ -571,6 +572,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "type": "tools/list",
                     "tools": [
                         "tts_speak",
+                        "volume_control",
                         "oled_display",
                         "fan_control",
                         "buzzer_alert",

@@ -64,6 +64,8 @@ class DeviceSnapshot(BaseModel):
     session_connected: bool = False
     voice_state: str | None = None
     last_seen: datetime | None = None
+    device_last_seen: datetime | None = None
+    device_age_seconds: float | None = None
     sensors: dict[str, Any] = Field(default_factory=dict)
     current_user: RfidUser | None = None
     mode: UserMode | None = None
