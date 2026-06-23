@@ -26,5 +26,6 @@ output/
 *.docx
 backend/data/*.json
 backend/data/*.db
+backend/data/*.sqlite3
 backend/data/audio/
 .playwright-cli/

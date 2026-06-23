@@ -14,6 +14,14 @@ def compact_text(value: Any, max_len: int = 80) -> str:
     return text[:max_len] if text else "OK"
 
 
+def protocol_token(value: Any, max_len: int = 24) -> str:
+    text = str(value or "").replace("\r", " ").replace("\n", " ").strip()
+    while "  " in text:
+        text = text.replace("  ", " ")
+    text = re.sub(r"[^A-Za-z0-9_.-]+", "_", text).strip("_")
+    return (text[:max_len] if text else "-") or "-"
+
+
 def fan_level(payload: dict[str, Any]) -> int:
     if "level" in payload:
         return max(1, min(3, int(payload["level"])))
@@ -45,6 +53,13 @@ def servo_angle(payload: dict[str, Any]) -> int:
             return presets[action]
         value = action
     return max(0, min(180, int(value)))
+
+
+def volume_level(payload: dict[str, Any]) -> str:
+    value = payload.get("level", payload.get("volume", 10))
+    if isinstance(value, str) and value.strip().lower() in {"up", "down"}:
+        return value.strip().upper()
+    return str(max(0, min(16, int(value))))
 
 
 def music_preset(payload: dict[str, Any]) -> str:
@@ -165,8 +180,17 @@ def command_from_action(action: ActionSpec) -> str:
 
     if action_type == "tts_speak":
         return f"NET:TTSHEX:{safe_tts_text(payload.get('text')).encode('utf-8').hex().upper()}"
+    if action_type == "audio_stop":
+        return "NET:TTS:STOP"
+    if action_type == "volume_control":
+        return f"NET:VOLUME:{volume_level(payload)}"
     if action_type == "oled_display":
         return f"NET:OLED:{compact_text(payload.get('text'), 40)}"
+    if action_type == "user_context":
+        user_id = protocol_token(payload.get("user_id"), 24)
+        uid = protocol_token(payload.get("uid") or payload.get("card_uid"), 16)
+        mode = protocol_token(payload.get("mode"), 12).upper()
+        return f"NET:UI:USER:{user_id}:{uid}:{mode}"
     if action_type == "fan_control":
         state = str(payload.get("state", "on")).lower()
         if state in {"off", "0", "false"}:

@@ -7,12 +7,10 @@ App({
   },
   onLaunch() {
     const apiBase = wx.getStorageSync("apiBase");
-    const controlToken = wx.getStorageSync("controlToken");
     if (apiBase) {
       this.globalData.apiBase = apiBase;
     }
-    if (controlToken) {
-      this.globalData.controlToken = controlToken;
-    }
+    wx.removeStorageSync("controlToken");
+    this.globalData.controlToken = "";
   }
 });

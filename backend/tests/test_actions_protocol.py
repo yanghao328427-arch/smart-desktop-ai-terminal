@@ -33,6 +33,12 @@ def test_tts_action_removes_fragile_speech_symbols():
     assert len(text.encode("utf-8")) <= 30
 
 
+def test_volume_action_supports_absolute_and_relative_levels():
+    assert command_from_action(ActionSpec(type="volume_control", payload={"level": 8})) == "NET:VOLUME:8"
+    assert command_from_action(ActionSpec(type="volume_control", payload={"level": 99})) == "NET:VOLUME:16"
+    assert command_from_action(ActionSpec(type="volume_control", payload={"level": "down"})) == "NET:VOLUME:DOWN"
+
+
 def test_servo_action_uses_bounded_angle_command():
     assert command_from_action(ActionSpec(type="servo_action", payload={"angle": 45})) == "NET:SERVO:45"
     assert command_from_action(ActionSpec(type="servo_action", payload={"angle": 240})) == "NET:SERVO:180"
@@ -50,3 +56,18 @@ def test_ui_state_action_uses_stm32_ui_commands():
     assert command_from_action(ActionSpec(type="ui_state", payload={"state": "listening"})) == "NET:UI:LISTEN"
     assert command_from_action(ActionSpec(type="ui_state", payload={"state": "output"})) == "NET:UI:OUTPUT"
     assert command_from_action(ActionSpec(type="ui_state", payload={"state": "bad"})) == "NET:UI:IDLE"
+
+
+def test_audio_stop_action_uses_tts_stop_command():
+    assert command_from_action(ActionSpec(type="audio_stop", payload={})) == "NET:TTS:STOP"
+
+
+def test_user_context_action_uses_protocol_safe_fields():
+    command = command_from_action(
+        ActionSpec(
+            type="user_context",
+            payload={"user_id": "user:alice 01", "uid": "04:A1:B2:C3", "mode": "study"},
+        )
+    )
+
+    assert command == "NET:UI:USER:user_alice_01:04_A1_B2_C3:STUDY"

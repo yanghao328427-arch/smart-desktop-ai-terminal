@@ -365,6 +365,10 @@ def device_status_phrase(device: DeviceSnapshot) -> str:
         parts.append(f"当前模式是 {device.mode.value}。")
     if device.current_user:
         parts.append(f"当前用户是 {device.current_user.name}。")
+        if device.current_user.profile_summary:
+            parts.append(f"用户上下文摘要：{device.current_user.profile_summary}。")
+        if device.current_user.admin_notes:
+            parts.append(f"管理员备注：{device.current_user.admin_notes}。")
     parts.append(sensor_phrase(device))
     return "".join(parts)
 
@@ -380,6 +384,7 @@ def build_system_prompt(device: DeviceSnapshot, *, has_news_context: bool = Fals
         "简单寒暄和硬件控制保持简短；复杂问题按问题需要展开，不要为了播报而压缩网页/小程序里的完整答案。"
         "如涉及设备控制，只能说明你将执行或已准备执行，不要编造已经收到 ACK、已经播报完成或已经看到硬件结果。"
         "不要编造未提供的传感器数值、用户身份或设备状态。"
+        "如果当前 RFID 用户带有上下文摘要或管理员备注，要据此理解用户偏好与任务背景，但不能牺牲事实准确性。"
         "你必须只输出一个 JSON 对象，不要输出 Markdown、代码块或额外说明。"
         'JSON 格式固定为 {"reply":"...","speech":"..."}。'
         "reply 给网页和小程序显示：短问题可以短答，复杂问题可以给较完整的中文答案，允许使用换行、编号和要点。"
@@ -392,7 +397,9 @@ def build_system_prompt(device: DeviceSnapshot, *, has_news_context: bool = Fals
         )
     context = "当前设备上下文：" + device_status_phrase(device)
     if device.current_user:
-        context += f"当前用户 UID 是 {device.current_user.uid}。"
+        context += f"当前用户 ID 是 {device.current_user.user_id}。"
+        if device.current_user.uid:
+            context += f"当前 RFID UID 是 {device.current_user.uid}。"
     if device.last_assistant:
         context += f"上一轮你说过：{device.last_assistant}"
     return identity + context
@@ -432,6 +439,7 @@ def plan_local_reply(text: str, device: DeviceSnapshot) -> tuple[str, str, list[
     normalized = text.strip().lower()
     compact = compact_input(text)
     mode_hint = f"当前模式是 {device.mode.value}。" if device.mode else ""
+    user_hint = f"{device.current_user.name}，" if device.current_user else ""
     actions: list[ActionSpec] = []
     reply_parts: list[str] = []
     oled = "AI READY"
@@ -447,7 +455,15 @@ def plan_local_reply(text: str, device: DeviceSnapshot) -> tuple[str, str, list[
     )
     unlock_on = any(key in compact for key in ["解锁", "unlock"])
     lock_on = ("锁定" in compact) or ("lock" in compact and "unlock" not in compact)
-    has_action_intent = any([heat_comfort_request, fan_on, fan_off, focus_on, beep_on, music_on, music_stop, unlock_on, lock_on])
+    volume_up = any(key in compact for key in ["音量大一点", "调大音量", "增大音量", "声音大一点", "volumeup"])
+    volume_down = any(key in compact for key in ["音量小一点", "调小音量", "减小音量", "声音小一点", "volumedown"])
+    volume_mute = any(key in compact for key in ["静音", "音量为零", "关闭声音", "mute"])
+    volume_max = any(key in compact for key in ["最大音量", "音量最大", "声音最大"])
+    volume_match = re.search(r"(?:音量|声音)(?:调到|设置为|设为|到|为)?(1[0-6]|[0-9])", compact)
+    has_action_intent = any([
+        heat_comfort_request, fan_on, fan_off, focus_on, beep_on, music_on, music_stop,
+        unlock_on, lock_on, volume_up, volume_down, volume_mute, volume_max, volume_match,
+    ])
 
     if any(key in compact for key in ["你是谁", "你是誰", "介绍下你自己", "自我介绍"]):
         return (
@@ -472,7 +488,7 @@ def plan_local_reply(text: str, device: DeviceSnapshot) -> tuple[str, str, list[
 
     if not has_action_intent and any(key in compact for key in ["你好", "嗨", "hello", "hi", "早上好", "晚上好"]):
         return (
-            "你好，我在。你可以直接问我状态，或者让我控制风扇、专注模式和锁定解锁。",
+            f"你好，{user_hint}我在。你可以直接问我状态，或者让我控制风扇、专注模式和锁定解锁。",
             "AI READY",
             [],
         )
@@ -515,8 +531,9 @@ def plan_local_reply(text: str, device: DeviceSnapshot) -> tuple[str, str, list[
 
     if any(key in compact for key in ["谁在登录", "谁登录了", "当前用户", "现在是谁"]):
         if device.current_user:
+            summary = f"，上下文摘要是 {device.current_user.profile_summary}" if device.current_user.profile_summary else ""
             return (
-                f"当前用户是 {device.current_user.name}，模式是 {device.current_user.mode.value}。",
+                f"当前用户是 {device.current_user.name}，模式是 {device.current_user.mode.value}{summary}。",
                 "USER READY",
                 [],
             )
@@ -607,6 +624,27 @@ def plan_local_reply(text: str, device: DeviceSnapshot) -> tuple[str, str, list[
         append_action(actions, "lock_control", {"state": "on"})
         reply_parts.append("已准备锁定桌面终端。")
         oled = "LOCKED"
+    if volume_mute:
+        append_action(actions, "volume_control", {"level": 0})
+        reply_parts.append("已静音。")
+        oled = "VOLUME 0"
+    elif volume_max:
+        append_action(actions, "volume_control", {"level": 16})
+        reply_parts.append("音量已调到最大。")
+        oled = "VOLUME 16"
+    elif volume_match:
+        level = int(volume_match.group(1))
+        append_action(actions, "volume_control", {"level": level})
+        reply_parts.append(f"音量已调到 {level}。")
+        oled = f"VOLUME {level}"
+    elif volume_up:
+        append_action(actions, "volume_control", {"level": "up"})
+        reply_parts.append("音量已调大。")
+        oled = "VOLUME UP"
+    elif volume_down:
+        append_action(actions, "volume_control", {"level": "down"})
+        reply_parts.append("音量已调小。")
+        oled = "VOLUME DOWN"
 
     if actions:
         return ("".join(reply_parts), oled, actions)

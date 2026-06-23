@@ -44,6 +44,18 @@ const DEFAULT_SUMMARY = {
   lastTextText: "-"
 };
 
+const VIEW_TITLES = {
+  home: "智能桌面 AI 终端",
+  overview: "链路总览",
+  security: "安全设置",
+  control: "硬件控制",
+  sensors: "传感器",
+  chat: "AI 对话",
+  rfid: "RFID",
+  actions: "动作记录",
+  diagnostics: "后台日志"
+};
+
 function normalizeApiBase(value) {
   return String(value || "").trim().replace(/\/+$/, "");
 }
@@ -100,13 +112,27 @@ function buildSummary(state, status, health) {
   const sensorOk = sensors.aht20_ok === true || sensors.pot_raw !== undefined || encoderOk;
   const ready = cloudOk && deviceOk && ackOk && ackClean && queueOk && sensorOk;
   const waiting = cloudOk && safeState.online && ackClean && queueOk && !ready;
+  const attentionOnly = cloudOk && deviceOnline && safeState.uart_ok && ackClean;
+  const readyScore = ready
+    ? "运行正常"
+    : (!cloudOk
+      ? "云端未就绪"
+      : (!deviceOnline
+        ? "设备离线"
+        : (!safeState.uart_ok
+          ? "UART 待确认"
+          : (!queueOk
+            ? "待 ACK"
+            : (!lastAck
+              ? "待动作验证"
+              : (!sensorOk ? "等待传感器" : "待确认"))))));
 
   return {
     protocolText: safeStatus.protocol || "-",
     aiText: cloudOk ? `${safeHealth.ai_provider}/${safeHealth.ai_model}` : "本地规则",
     readyText: `云端 ${cloudOk ? "OK" : "未就绪"} · 设备 ${deviceOnline ? (directWebSocket ? "WS 在线" : "HTTP 上报在线") : "未连接"} · UART ${safeState.uart_ok ? "OK" : "未确认"} · ACK ${lastAck ? (ackOk ? "OK" : "异常") : "待验证"} · 传感器 ${sensorOk ? "有上报" : "等待上报"}`,
-    readyScore: ready ? "闭环就绪" : (waiting ? "待确认" : "需处理"),
-    readyClass: ready ? "ready ok" : (waiting ? "ready warn" : "ready bad"),
+    readyScore,
+    readyClass: ready ? "ready ok" : (attentionOnly ? "ready warn" : "ready bad"),
     readyCloudText: cloudOk ? (safeHealth.ai_model || "OK") : "未就绪",
     readyDeviceText: deviceOk ? `${directWebSocket ? "WebSocket" : "HTTP 轮询"} / UART OK` : "检查连接",
     readyAckText: !lastAck ? "等待真实 ACK" : (ackOk ? `${safeState.ack_ok_count || 0} 个成功` : `${safeState.ack_err_count || 0} 个错误`),
@@ -146,6 +172,55 @@ function buildSummary(state, status, health) {
   };
 }
 
+function buildStatusItems(state, status, health, summary) {
+  const safeState = state || {};
+  const safeHealth = health || {};
+  const sensors = safeState.sensors || {};
+  const cloudOk = safeHealth.cloud_ready === true;
+  const online = safeState.online === true;
+  const uartOk = safeState.uart_ok === true;
+  const ackOk = Boolean(safeState.last_ack && safeState.last_ack.ok === true);
+  const sensorOk = sensors.aht20_ok === true || sensors.pot_raw !== undefined || sensors.encoder_position !== undefined;
+  return [
+    {
+      label: "云端 AI",
+      value: cloudOk ? (safeHealth.ai_model || "OK") : "未就绪",
+      note: cloudOk ? (safeHealth.ai_provider || "DashScope") : "检查 Hugging Face Secret",
+      tone: cloudOk ? "ok" : "bad"
+    },
+    {
+      label: "设备链路",
+      value: online ? summary.sessionText : "离线",
+      note: online ? `最近上报 ${summary.lastSeenText}` : "等待 ESP32 心跳",
+      tone: online ? "ok" : "bad"
+    },
+    {
+      label: "STM32 UART",
+      value: uartOk ? "OK" : "未确认",
+      note: uartOk ? "ESP32 到 STM32 正常" : "检查串口桥接",
+      tone: uartOk ? "ok" : "warn"
+    },
+    {
+      label: "动作 ACK",
+      value: safeState.last_ack ? (ackOk ? "OK" : "异常") : "待验证",
+      note: safeState.last_ack ? summary.lastAckText : "尚无真实动作回执",
+      tone: safeState.last_ack ? (ackOk ? "ok" : "bad") : "warn"
+    },
+    {
+      label: "传感器",
+      value: sensorOk ? "有上报" : "等待",
+      note: `${summary.temperatureText} · ${summary.humidityText} · ${summary.distanceText}`,
+      tone: sensorOk ? "ok" : "warn"
+    },
+    {
+      label: "执行队列",
+      value: summary.readyQueueText,
+      note: `连接数 ${status && status.connection_count ? status.connection_count : 0}`,
+      tone: (safeState.pending_action_count || 0) === 0 ? "ok" : "warn"
+    }
+  ];
+}
+
 function describeRecentAction(action) {
   const statusMap = {
     queued: "待发送",
@@ -156,7 +231,7 @@ function describeRecentAction(action) {
   return {
     id: action.id,
     title: `${statusMap[action.status] || action.status} · ${action.type}`,
-    line: action.command,
+    line: action.status === "failed" ? (action.error || "执行异常") : "命令已提交到设备链路",
     time: formatTime(action.acked_at || action.sent_at || action.created_at)
   };
 }
@@ -164,20 +239,34 @@ function describeRecentAction(action) {
 Page({
   data: {
     apiBase: normalizeApiBase(app.globalData.apiBase),
-    controlToken: app.globalData.controlToken || "",
+    controlToken: "",
     deviceId: app.globalData.deviceId,
     state: {},
     status: {},
     chatText: "",
     messages: [],
-    rfid: { uid: "", name: "" },
+    rfid: {
+      uid: "",
+      userId: "",
+      name: "",
+      profileSummary: "",
+      adminNotes: "",
+      enrollId: "",
+      enrollStatus: "未开始"
+    },
     modes: ["study", "rest", "admin"],
     modeIndex: 0,
     diagnosticsText: "{}",
     summary: DEFAULT_SUMMARY,
+    statusItems: buildStatusItems({}, {}, {}, DEFAULT_SUMMARY),
     recentActions: [],
     refreshTime: "-",
-    socketText: "WS 未连接"
+    socketText: "WS 未连接",
+    currentView: "home",
+    currentTitle: VIEW_TITLES.home,
+    controlTokenDraft: "",
+    tokenSaved: false,
+    tokenSavedText: "本次未输入"
   },
 
   onLoad() {
@@ -195,12 +284,14 @@ Page({
     this.socketWanted = false;
     this.closeRealtimeSocket();
     this.stopAutoRefresh();
+    this.clearRfidEnrollTimer();
   },
 
   onUnload() {
     this.socketWanted = false;
     this.closeRealtimeSocket();
     this.stopAutoRefresh();
+    this.clearRfidEnrollTimer();
   },
 
   onPullDownRefresh() {
@@ -238,9 +329,47 @@ Page({
     wx.showToast({ title, icon: "none" });
   },
 
+  setView(event) {
+    const view = event.currentTarget.dataset.view || "home";
+    this.setData({
+      currentView: VIEW_TITLES[view] ? view : "home",
+      currentTitle: VIEW_TITLES[view] || VIEW_TITLES.home
+    });
+  },
+
+  ensureControlToken() {
+    if (this.data.controlToken) return true;
+    this.toast("先在安全设置输入本次控制口令");
+    this.setData({
+      currentView: "security",
+      currentTitle: VIEW_TITLES.security
+    });
+    return false;
+  },
+
+  hasActiveUserContext() {
+    const state = this.data.state || {};
+    const sensors = state.sensors || {};
+    return Boolean(state.current_user && state.active_session_id && sensors.active_context_physical_card === true);
+  },
+
+  ensureAccessContext() {
+    if (this.data.controlToken || this.hasActiveUserContext()) return true;
+    this.toast("先刷已注册 RFID 卡或输入本次控制口令");
+    this.setData({
+      currentView: "rfid",
+      currentTitle: VIEW_TITLES.rfid
+    });
+    return false;
+  },
+
   appendMessage(role, text) {
     const messages = this.data.messages.concat([{ id: Date.now() + Math.random(), role, text }]);
     this.setData({ messages });
+  },
+
+  appendSystemNote(text) {
+    this.appendMessage("assistant", text);
   },
 
   onApiBaseInput(event) {
@@ -264,15 +393,32 @@ Page({
 
 
   onControlTokenInput(event) {
-    this.setData({ controlToken: event.detail.value.trim() });
+    this.setData({ controlTokenDraft: event.detail.value.trim() });
   },
 
   saveControlToken() {
-    const controlToken = String(this.data.controlToken || "").trim();
-    this.setData({ controlToken });
-    wx.setStorageSync("controlToken", controlToken);
+    const controlToken = String(this.data.controlTokenDraft || "").trim();
+    this.setData({
+      controlToken,
+      controlTokenDraft: "",
+      tokenSaved: Boolean(controlToken),
+      tokenSavedText: controlToken ? "本次有效" : "本次未输入"
+    });
+    wx.removeStorageSync("controlToken");
     app.globalData.controlToken = controlToken;
-    this.toast("控制口令已保存");
+    this.toast(controlToken ? "控制口令本次有效" : "控制口令为空");
+  },
+
+  clearControlToken() {
+    this.setData({
+      controlToken: "",
+      controlTokenDraft: "",
+      tokenSaved: false,
+      tokenSavedText: "本次未输入"
+    });
+    wx.removeStorageSync("controlToken");
+    app.globalData.controlToken = "";
+    this.toast("已清除本次口令");
   },
   onChatInput(event) {
     this.setData({ chatText: event.detail.value });
@@ -282,8 +428,20 @@ Page({
     this.setData({ "rfid.uid": event.detail.value });
   },
 
+  onRfidUserIdInput(event) {
+    this.setData({ "rfid.userId": event.detail.value });
+  },
+
   onRfidNameInput(event) {
     this.setData({ "rfid.name": event.detail.value });
+  },
+
+  onRfidSummaryInput(event) {
+    this.setData({ "rfid.profileSummary": event.detail.value });
+  },
+
+  onRfidNotesInput(event) {
+    this.setData({ "rfid.adminNotes": event.detail.value });
   },
 
   onModeChange(event) {
@@ -301,6 +459,12 @@ Page({
     if (!this.refreshTimer) return;
     clearInterval(this.refreshTimer);
     this.refreshTimer = null;
+  },
+
+  clearRfidEnrollTimer() {
+    if (!this.rfidEnrollTimer) return;
+    clearTimeout(this.rfidEnrollTimer);
+    this.rfidEnrollTimer = null;
   },
 
   connectRealtimeSocket() {
@@ -390,11 +554,13 @@ Page({
         this.request(`/api/realtime/diagnostics/${this.data.deviceId}`),
         this.request("/api/health")
       ]);
+      const summary = buildSummary(state, status, health);
       this.setData({
         state,
         status,
         diagnosticsText: JSON.stringify(diagnostics, null, 2),
-        summary: buildSummary(state, status, health),
+        summary,
+        statusItems: buildStatusItems(state, status, health, summary),
         recentActions: (diagnostics.recent_actions || []).slice().reverse().slice(0, 6).map(describeRecentAction),
         refreshTime: `最近刷新 ${formatTime(new Date())}`
       });
@@ -411,14 +577,13 @@ Page({
   async sendChatText(rawText) {
     const text = String(rawText || "").trim();
     if (!text) return;
+    if (!this.ensureAccessContext()) return;
     this.setData({ chatText: "" });
     this.appendMessage("user", text);
     try {
       const response = await this.request("/api/chat", "POST", { device_id: this.data.deviceId, text });
       this.appendMessage("assistant", response.reply);
-      if (response.commands && response.commands.length) {
-        this.appendMessage("assistant", response.commands.join("\n"));
-      }
+      if (response.actions && response.actions.length) this.appendSystemNote(`已生成 ${response.actions.length} 条设备动作，等待 ACK。`);
       this.setData({ state: response.state });
       this.refreshState({ quiet: true });
     } catch (error) {
@@ -435,6 +600,7 @@ Page({
   },
 
   async sendHardwareAction(event) {
+    if (!this.ensureAccessContext()) return;
     const actionMap = {
       fan_on: { label: "打开风扇", type: "fan_control", payload: { state: "on", level: 2 } },
       beep: { label: "蜂鸣提醒", type: "buzzer_alert", payload: {} },
@@ -451,13 +617,76 @@ Page({
         mark_sent: true
       });
       this.setData({ state: response.state });
-      this.appendMessage("assistant", `${spec.label}：${(response.commands || []).join(" / ") || "已入队"}`);
+      this.appendSystemNote(`${spec.label}已提交，等待设备 ACK。`);
       this.refreshState({ quiet: true });
     } catch (error) {
       this.toast(error.message);
     }
   },
+  scheduleRfidEnrollmentPoll(enrollId) {
+    this.clearRfidEnrollTimer();
+    this.rfidEnrollTimer = setTimeout(() => {
+      this.pollRfidEnrollment(enrollId);
+    }, 1200);
+  },
+
+  async pollRfidEnrollment(enrollId) {
+    if (!enrollId || enrollId !== this.data.rfid.enrollId) return;
+    try {
+      const response = await this.request(`/api/rfid/enroll/${enrollId}`);
+      this.setData({
+        "rfid.enrollStatus": response.status,
+        state: response.state || this.data.state
+      });
+      if (response.status === "completed") {
+        this.clearRfidEnrollTimer();
+        this.appendMessage("assistant", `RFID 注册完成 ${response.uid} -> ${response.user.name}/${response.user.mode}`);
+        this.refreshState({ quiet: true });
+        return;
+      }
+      if (response.status === "pending") {
+        this.scheduleRfidEnrollmentPoll(enrollId);
+        return;
+      }
+      this.clearRfidEnrollTimer();
+      this.appendMessage("assistant", `RFID 注册${response.status === "expired" ? "已过期" : "已取消"}`);
+      this.refreshState({ quiet: true });
+    } catch (error) {
+      this.clearRfidEnrollTimer();
+      this.toast(error.message);
+    }
+  },
+
+  async startRfidEnrollment() {
+    if (!this.ensureControlToken()) return;
+    const userId = this.data.rfid.userId.trim();
+    const name = this.data.rfid.name.trim();
+    const payload = {
+      device_id: this.data.deviceId,
+      mode: this.data.modes[this.data.modeIndex],
+      profile_summary: this.data.rfid.profileSummary.trim() || null,
+      admin_notes: this.data.rfid.adminNotes.trim() || null
+    };
+    if (userId) {
+      payload.user_id = userId;
+    } else {
+      payload.name = name || `user-${Date.now().toString().slice(-6)}`;
+    }
+    try {
+      const response = await this.request("/api/rfid/enroll/start", "POST", payload);
+      this.setData({
+        "rfid.enrollId": response.enroll_id,
+        "rfid.enrollStatus": response.status
+      });
+      this.appendMessage("assistant", `RFID 在线注册已开始 ${response.enroll_id.slice(0, 8)}`);
+      this.scheduleRfidEnrollmentPoll(response.enroll_id);
+    } catch (error) {
+      this.toast(error.message);
+    }
+  },
+
   async registerRfid() {
+    if (!this.ensureControlToken()) return;
     const uid = normalizeUid(this.data.rfid.uid);
     if (!uid) {
       this.toast("请先输入 UID");
@@ -468,11 +697,16 @@ Page({
         device_id: this.data.deviceId,
         uid,
         name: this.data.rfid.name.trim() || uid,
-        mode: this.data.modes[this.data.modeIndex]
+        mode: this.data.modes[this.data.modeIndex],
+        profile_summary: this.data.rfid.profileSummary.trim() || null,
+        admin_notes: this.data.rfid.adminNotes.trim() || null
       });
       this.setData({ state: response.state });
-      this.appendMessage("assistant", `已注册 ${response.user.uid} -> ${response.user.name}/${response.user.mode}`);
-      this.toast("已注册");
+      this.appendMessage(
+        "assistant",
+        `已绑定 ${response.user.uid} -> ${response.user.name}/${response.user.mode}`
+      );
+      this.toast("已绑定");
       this.refreshState({ quiet: true });
     } catch (error) {
       this.toast(error.message);
@@ -480,19 +714,22 @@ Page({
   },
 
   async scanRfid() {
+    if (!this.ensureControlToken()) return;
     const uid = normalizeUid(this.data.rfid.uid);
     if (!uid) {
       this.toast("请先输入 UID");
       return;
     }
     try {
-      const response = await this.request("/api/rfid/scan", "POST", { device_id: this.data.deviceId, uid });
+      const response = await this.request("/api/rfid/scan", "POST", {
+        device_id: this.data.deviceId,
+        uid,
+        source: "web_simulator"
+      });
       this.setData({ state: response.state });
-      this.appendMessage("assistant", `${response.authorized ? "RFID OK" : "RFID DENY"} ${response.uid}`);
+      this.appendMessage("assistant", `${response.authorized ? "RFID OK" : "RFID DENY"} ${response.uid} · ${response.source}`);
       this.appendMessage("assistant", response.message);
-      if (response.commands && response.commands.length) {
-        this.appendMessage("assistant", response.commands.join("\n"));
-      }
+      if (response.actions && response.actions.length) this.appendSystemNote(`RFID 已触发 ${response.actions.length} 条设备动作，等待 ACK。`);
       this.refreshState({ quiet: true });
     } catch (error) {
       this.toast(error.message);

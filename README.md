@@ -16,7 +16,7 @@ app_port: 7860
 构建一个基于 STM32F103、XIAO ESP32S3 Sense、SYN6288 TTS 和 RC522 RFID 的桌面级智能 AI 终端：
 
 - STM32：本地传感器采集、OLED、RGB、蜂鸣器、风扇、舵机、SYN6288 播报。
-- ESP32S3 Sense：WiFi、语音唤醒/录音入口、WebSocket 实时会话、RFID、STM32 UART 桥接。
+- ESP32S3 Sense：WiFi、RFID、STM32 UART 桥接，并通过本机 HTTP relay 接入公网后端。
 - FastAPI 后端：设备状态、RFID 用户、AI 对话、动作规划、实时诊断、Web/移动端控制台。
 - 应用层：Web 控制台和移动端页面，满足课程设计对 PC/移动应用端的要求。
 
@@ -24,7 +24,7 @@ app_port: 7860
 
 ## 当前重建原则
 
-1. 主链路只保留 ESP32S3 WebSocket 实时会话，不再把 ESP8266 HTTP 作为主线。
+1. 当前答辩主链使用 ESP32S3 -> 本机 HTTP relay -> Hugging Face；WebSocket 保留给网页实时事件和兼容链路。
 2. 先稳定文本闭环：`用户问题 -> 后端 Agent -> STM32 命令 -> TTS/OLED/执行器`。
 3. 音频流在文本闭环稳定后接入，优先采用 WebSocket 二进制帧或有 ACK 的分片。
 4. RFID 独立验收后再并入主链路，避免调试复杂度叠加。
@@ -75,9 +75,9 @@ Invoke-RestMethod http://127.0.0.1:8083/api/health | ConvertTo-Json
 
 语音演示：
 
-- 在 Chrome / Edge 打开 `http://127.0.0.1:8083/console`
-- 点击“开始语音”并允许麦克风权限
-- 直接说“你是谁”或“打开风扇”，浏览器会完成真实语音识别，后端继续走 AI/TTS/ACK 闭环
+- 先刷已注册 RFID 卡，或在本次网页会话输入控制口令并选择用户上下文
+- 双击 `tools\start_laptop_realtime_listener.cmd`，它默认进入 KEY2 PTT 模式
+- 按住 STM32 `KEY2/PB13` 说话，松开后电脑麦克风录音立即上传，后端继续走 AI/TTS/ACK 闭环；短按 KEY2 只终止当前播报
 
 云端模型冒烟测试：
 
@@ -90,13 +90,30 @@ python .\tools\cloud_dialogue_smoke.py --base-url http://127.0.0.1:8083
 
 如果要在答辩前强制检查“必须是真实云端模型”，加上 `--require-cloud`。
 
+答辩现场的只读实时就绪检查：
+
+```powershell
+python .\tools\realtime_readiness_check.py
+```
+
+该脚本默认访问已部署的 Hugging Face 服务，只读取健康、设备状态和诊断接口；它要求云端就绪、ESP32 在线、UART 正常、最近上报不超过 20 秒，并检测至少两项真实传感器字段。`"verdict": "PASS"` 才表示可以把页面数据作为当场实时数据展示。ESP32 刚重新插入或重启时，先预留 1—3 分钟完成 Wi-Fi/UART 保活启动，再运行此检查。
+
+整套答辩启动（relay、实时自检、网页控制台与语音前端）：
+
+```powershell
+.\tools\start_defense_demo.cmd
+```
+
+启动器不会重复开启已监听的 relay；通过实时自检后才会打开控制台，并在用户确认后启动 KEY2 触发的笔记本麦克风 PTT 前端。详见 [答辩演示脚本](docs/DEMO_STORYBOARD.md#一键启动整套答辩链路)。
+
 测试：
 
 ```powershell
 python -m pytest backend/tests -q
 ```
 
-RFID 注册会持久化到本机 `backend/data/rfid_users.json`，用于避免后端重启后丢失已登记卡片；该文件不包含 `backend/.env` 中的任何密钥。
+RFID 用户、卡片绑定、会话和对话上下文会持久化到本机 `backend/data/context.sqlite3`，旧版 `backend/data/rfid_users.json` 只作为迁移来源；这些文件不包含 `backend/.env` 中的任何密钥。
+已注册卡刷卡后进入该用户自己的上下文；未知卡或未刷卡状态不能访问用户上下文，除非网页/小程序携带 `CONTROL_TOKEN`。在线注册通过网页/小程序发起后，等待真实 RC522 下一次刷卡完成绑定；手动 UID 仅保留为备选调试入口。真实 ESP32S3 RFID 上报使用独立 `DEVICE_TOKEN`。
 
 ## 目录
 
@@ -118,6 +135,7 @@ RFID 注册会持久化到本机 `backend/data/rfid_users.json`，用于避免�
 - [微信小程序路线](docs/MINIPROGRAM_PLAN.md)
 - [本地密钥与配置](docs/LOCAL_SECRET_CONFIG.md)
 - [答辩演示脚本](docs/DEMO_STORYBOARD.md)
+- [答辩现场运行卡](docs/DEMO_STORYBOARD.md#0-开场自检30-秒)
 - [已安装技能与项目应用方式](docs/SKILLS_APPLIED.md)
 - [测试计划](docs/TEST_PLAN.md)
 - [重建禁区](docs/REBUILD_GUARDRAILS.md)

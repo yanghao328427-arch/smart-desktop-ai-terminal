@@ -341,6 +341,7 @@ def render_status(args: argparse.Namespace, status: RuntimeStatus, *, clear: boo
         f"backend: {'ONLINE' if status.backend_online else 'OFFLINE'} ({status.backend_summary})",
         f"device: {status.device_summary}",
         f"pending actions: {status.pending_action_count}",
+        f"input mode: {args.input_mode}",
         f"audio input: READY, sample-rate={args.sample_rate}, channels={args.channels}",
         (
             "voice detector: "
@@ -402,6 +403,18 @@ def wait_until_backend_idle(args: argparse.Namespace, status: RuntimeStatus) -> 
         status.state = "PENDING_ACTIONS"
         render_status(args, status)
         time.sleep(max(0.1, args.status_interval_seconds))
+
+
+def latest_button_event(args: argparse.Namespace, status: RuntimeStatus) -> tuple[int, str]:
+    diag = diagnostics(args.base_url, args.device_id)
+    state = diag.get("state") or {}
+    sensors = state.get("sensors") or {}
+    status.pending_action_count = int(state.get("pending_action_count") or 0)
+    line = str(sensors.get("last_button_line") or "")
+    seq = int(sensors.get("last_button_seq") or 0)
+    if line:
+        status.last_feedback = line
+    return seq, line
 
 
 def pcm_rms(raw_pcm: bytes) -> float:
@@ -784,6 +797,88 @@ def listen_for_utterance(args: argparse.Namespace, status: RuntimeStatus) -> tup
                 return bytes(audio), stats
 
 
+def listen_for_ptt_utterance(args: argparse.Namespace, status: RuntimeStatus) -> tuple[bytes, dict[str, Any]]:
+    try:
+        import sounddevice as sd
+    except ImportError as exc:
+        raise RuntimeError("sounddevice is required: python -m pip install sounddevice") from exc
+
+    block_frames = max(1, int(args.sample_rate * args.block_ms / 1000))
+    max_blocks = max(1, int(args.max_record_seconds * 1000 / args.block_ms))
+    poll_seconds = max(0.03, float(args.ptt_poll_seconds))
+
+    last_seq, _ = latest_button_event(args, status)
+    status.state = "WAIT_KEY2_HOLD"
+    set_status_light(args, status, "blue", "ptt_wait")
+    render_status(args, status)
+
+    last_render = 0.0
+    while True:
+        seq, line = latest_button_event(args, status)
+        if seq != last_seq:
+            last_seq = seq
+            if "KEY2:HOLD_START" in line:
+                break
+        status.state = "WAIT_KEY2_HOLD"
+        now = time.monotonic()
+        if now - last_render >= args.status_interval_seconds:
+            render_status(args, status)
+            last_render = now
+        time.sleep(poll_seconds)
+
+    audio = bytearray()
+    recorded_blocks = 0
+    last_poll = 0.0
+    status.state = "PTT_RECORDING"
+    status.conversation_active = True
+    set_status_light(args, status, "blue", "ptt_recording")
+    render_status(args, status)
+
+    with sd.RawInputStream(
+        samplerate=args.sample_rate,
+        channels=args.channels,
+        dtype="int16",
+        device=parse_device(args.input_device),
+        blocksize=block_frames,
+    ) as stream:
+        while True:
+            block, overflowed = stream.read(block_frames)
+            raw = bytes(block)
+            audio.extend(raw)
+            recorded_blocks += 1
+            status.current_rms = pcm_rms(raw)
+            if overflowed:
+                status.last_error = "audio input overflow"
+
+            now = time.monotonic()
+            if now - last_poll >= poll_seconds:
+                seq, line = latest_button_event(args, status)
+                last_poll = now
+                if seq != last_seq:
+                    last_seq = seq
+                    if "KEY2:UP" in line:
+                        break
+                    if "KEY2:SHORT" in line:
+                        audio.clear()
+                        status.state = "PTT_CANCELLED"
+                        render_status(args, status)
+                        return listen_for_ptt_utterance(args, status)
+                if now - last_render >= args.status_interval_seconds:
+                    render_status(args, status)
+                    last_render = now
+
+            if recorded_blocks >= max_blocks:
+                status.last_error = "PTT max record duration reached"
+                break
+
+    if not audio:
+        raise RuntimeError("PTT recording ended without audio")
+    stats_path = output_path(args.source, status.turn_count + 1)
+    save_wav(stats_path, bytes(audio), sample_rate=args.sample_rate, channels=args.channels)
+    stats = audio_stats(bytes(audio), sample_rate=args.sample_rate, channels=args.channels, path=stats_path)
+    return bytes(audio), stats
+
+
 def run_turn(args: argparse.Namespace, status: RuntimeStatus, audio: bytes, stats: dict[str, Any]) -> None:
     wav_path = Path(str(stats["path"]))
     status.last_audio = str(wav_path)
@@ -832,6 +927,8 @@ def run_turn(args: argparse.Namespace, status: RuntimeStatus, audio: bytes, stat
             time.sleep(max(0.0, args.cooldown_seconds))
             return
 
+        if args.input_mode == "ptt":
+            status.conversation_active = True
         wake_matches = phrase_matches(status.last_asr_text, args.wake_match_phrase)
         stop_matches = phrase_matches(status.last_asr_text, args.stop_match_phrase)
 
@@ -855,7 +952,7 @@ def run_turn(args: argparse.Namespace, status: RuntimeStatus, audio: bytes, stat
                 time.sleep(max(0.0, args.cooldown_seconds))
                 return
             status.last_asr_text = command_text
-        elif stop_matches:
+        elif stop_matches and args.input_mode != "ptt":
             status.conversation_active = False
             status.state = "SLEEP_WAIT_WAKE"
             status.last_error = "stop word heard; sleeping until wake word"
@@ -960,6 +1057,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-rate", type=int, default=16000)
     parser.add_argument("--channels", type=int, default=1)
     parser.add_argument("--source", default=DEFAULT_SOURCE)
+    parser.add_argument("--input-mode", choices=["vad", "ptt"], default="vad")
+    parser.add_argument("--ptt-poll-seconds", type=float, default=0.08)
     parser.add_argument("--wake-phrase", action="append", default=[], help="Wake phrase. Repeatable.")
     parser.add_argument("--stop-phrase", action="append", default=[], help="Stop phrase. Repeatable.")
     parser.add_argument("--wake-alias", action="append", default=[], help="Extra wake phrase alias. Repeatable.")
@@ -1005,6 +1104,8 @@ def main() -> int:
     configure_text_output()
     args = parse_args()
     args.base_url = args.base_url.rstrip("/")
+    if args.input_mode == "ptt" and args.source == DEFAULT_SOURCE:
+        args.source = "laptop_ptt_listener"
     if not args.wake_phrase:
         args.wake_phrase = DEFAULT_WAKE_PHRASES
     if not args.stop_phrase:
@@ -1053,8 +1154,11 @@ def main() -> int:
         render_status(args, status)
         return 0
 
-    print("[privacy] Microphone listening will start now because you opened the realtime listener.", flush=True)
-    print("[privacy] The listener is silent: no app beep, no cue sound.", flush=True)
+    if args.input_mode == "ptt":
+        print("[privacy] PTT mode records only while KEY2 is held on the STM32 board.", flush=True)
+    else:
+        print("[privacy] Microphone listening will start now because you opened the realtime listener.", flush=True)
+        print("[privacy] The listener is silent: no app beep, no cue sound.", flush=True)
 
     captured_utterances = 0
     try:
@@ -1062,7 +1166,11 @@ def main() -> int:
             refresh_backend_status(args, status)
             wait_until_backend_idle(args, status)
             render_status(args, status)
-            _audio, stats = listen_for_utterance(args, status)
+            if args.input_mode == "ptt":
+                _audio, stats = listen_for_ptt_utterance(args, status)
+                status.conversation_active = True
+            else:
+                _audio, stats = listen_for_utterance(args, status)
             captured_utterances += 1
             run_turn(args, status, _audio, stats)
             if args.max_utterances > 0 and captured_utterances >= args.max_utterances:

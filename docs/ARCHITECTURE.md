@@ -4,42 +4,42 @@
 
 ```text
 应用层
-  Web 控制台 / 移动端页面 / 答辩演示页
+  Web 控制台 / 微信小程序 / 答辩演示页
 
 平台层
-  FastAPI 后端 / 设备状态 / RFID 用户 / AI Agent / 工具调用 / 诊断
+  Hugging Face 部署的 FastAPI 后端 / 设备状态 / RFID 用户 / DashScope AI / 工具调用 / 诊断
 
 网络层
-  ESP32S3 WiFi / WebSocket 实时会话 / UART 到 STM32 / 本地 USB 调试
+  ESP32S3 Wi-Fi / 本机 HTTP relay / HTTPS 公网后端 / UART 到 STM32 / 本地 USB 调试
 
 感知与执行层
   STM32F103 / AHT20 / 超声波 / 声音传感器 / RC522 / OLED / RGB / 风扇 / 舵机 / SYN6288
 ```
 
-## 主链路
+## 当前答辩部署主链路
 
 ```text
-用户语音或 Web 文本
-    |
+Web 控制台 / 微信小程序
+    | HTTPS / WSS
     v
-ESP32S3 Sense
-    |
-    | WebSocket /api/realtime/ws
-    v
-FastAPI 后端
-    |
-    | assistant + stm32/commands
-    v
-ESP32S3 UART bridge
-    |
-    | NET:CMD:<action_id>:NET:<command>
-    v
-STM32 执行器
-    |
-    | BT:ACK:<action_id>:OK
-    v
-ESP32S3 -> 后端 ACK
+Hugging Face：FastAPI + DashScope AI + 实时状态 / 指令 / ACK
+    ^                                        |
+    | HTTPS（本机 relay 转发）                 | GET commands / POST ACK
+    |                                        v
+本机 ESP32 relay :8091  <--- Wi-Fi --->  ESP32S3 Sense  <--- UART --->  STM32 / 传感器 / 执行器
 ```
+
+ESP32 当前通过 HTTP relay 上报 heartbeat、遥测与 ACK，并轮询待执行指令；因此 `session_connected=false` 不等于设备离线。网页和小程序都只读取 Hugging Face 的状态接口，展示的是同一台 `desktop-agent-001` 设备的云端快照。
+
+## 双云分工与边界
+
+| 服务 | 角色 | 是否为当前答辩主链必需 |
+| --- | --- | --- |
+| Hugging Face | 部署 FastAPI、调用 DashScope、提供 Web/小程序公网 API、保存实时状态与 ACK | 是 |
+| 华为云 IoTDA | ESP32 的可选 MQTT 设备云接入：属性上报与平台命令 | 否，作为平台扩展并行运行 |
+| 华为云 CCI | 未来可替换 Hugging Face 的容器部署方案 | 否，当前未启用 |
+
+IoTDA 是 ESP32 的并行设备云通道，不是“ESP32 → IoTDA → Hugging Face → 页面”的串行中转站。若 IoTDA 不可用，只要 ESP32 → 本机 relay → Hugging Face 正常，当前答辩主链仍可完成；反之，IoTDA 的属性上报不能替代 Web、小程序和 AI 所需的 Hugging Face 后端。
 
 ## 状态机
 
@@ -87,4 +87,3 @@ ESP32S3 -> 后端 ACK
 - 设备状态时间线。
 - 课程报告和 PPT。
 - 成果视频演示脚本。
-

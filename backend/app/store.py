@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from .actions import command_from_action, parse_ack_line, wrap_command
+from .context_db import ContextDatabase, EnrollmentRecord
 from .schemas import (
     ActionRecord,
     ActionSpec,
@@ -32,6 +33,18 @@ def uart_safe_action_order(specs: list[ActionSpec]) -> list[ActionSpec]:
     return [spec for spec in specs if spec.type != "tts_speak"] + [spec for spec in specs if spec.type == "tts_speak"]
 
 
+DEVICE_ONLINE_TTL_SECONDS = 30
+
+
+@dataclass
+class RfidScanResult:
+    uid: str
+    user: RfidUser | None
+    state: DeviceSnapshot
+    enrolled: bool = False
+    enroll_id: str | None = None
+
+
 class RuntimeStore:
     def __init__(
         self,
@@ -39,15 +52,16 @@ class RuntimeStore:
         default_edge_id: str,
         *,
         rfid_registry_path: str | Path | None = None,
+        context_db_path: str | Path | None = None,
     ) -> None:
         self.default_device_id = default_device_id
         self.default_edge_id = default_edge_id
         self._devices: dict[str, DeviceSnapshot] = {}
         self._actions: dict[str, list[ActionRecord]] = {}
-        self._rfid_users: dict[str, RfidUser] = {}
         self._rfid_registry_path = Path(rfid_registry_path) if rfid_registry_path else None
+        self.context_db = ContextDatabase(context_db_path or Path(__file__).resolve().parents[1] / "data" / "context.sqlite3")
         self._lock = RLock()
-        self._load_rfid_users()
+        self.context_db.migrate_rfid_json(self._rfid_registry_path)
         self.ensure_device(default_device_id, default_edge_id)
 
     def ensure_device(self, device_id: str | None = None, edge_id: str | None = None) -> DeviceSnapshot:
@@ -90,10 +104,13 @@ class RuntimeStore:
     def set_session_connected(self, device_id: str, edge_id: str | None, connected: bool) -> DeviceSnapshot:
         with self._lock:
             device = self.ensure_device(device_id, edge_id)
+            stamp = now_utc()
             device.session_connected = connected
             device.online = connected
             device.state = DeviceRunState.idle if connected else DeviceRunState.offline
-            device.last_seen = now_utc()
+            device.last_seen = stamp
+            if connected:
+                self._mark_device_seen(device, stamp)
             self._refresh_counts(device.device_id)
             return device
 
@@ -109,14 +126,18 @@ class RuntimeStore:
     ) -> DeviceSnapshot:
         with self._lock:
             device = self.ensure_device(device_id, edge_id)
+            stamp = now_utc()
             device.online = online
             device.uart_ok = uart_ok
             device.voice_state = voice_state
-            device.last_seen = now_utc()
+            device.last_seen = stamp
+            device.device_last_seen = stamp
+            device.device_age_seconds = 0.0
             device.sensors["uptime_ms"] = uptime_ms
             if online and device.state == DeviceRunState.offline:
                 device.state = DeviceRunState.idle
             if not online:
+                device.session_connected = False
                 device.state = DeviceRunState.offline
             self._refresh_counts(device.device_id)
             return device
@@ -131,6 +152,7 @@ class RuntimeStore:
     ) -> DeviceSnapshot:
         with self._lock:
             device = self.ensure_device(device_id, edge_id)
+            stamp = now_utc()
             if sensors.get("distance_enabled") is False:
                 sensors["distance_ok"] = False
                 sensors.pop("distance_cm", None)
@@ -142,52 +164,149 @@ class RuntimeStore:
             if voice_state is not None:
                 device.voice_state = voice_state
             device.online = True
-            device.last_seen = now_utc()
+            device.last_seen = stamp
+            self._mark_device_seen(device, stamp)
             if device.state == DeviceRunState.offline:
                 device.state = DeviceRunState.idle
             self._refresh_counts(device.device_id)
             return device
 
-    def register_rfid(self, uid: str, name: str, mode: UserMode, device_id: str | None) -> tuple[RfidUser, DeviceSnapshot]:
+    def list_users(self) -> list[RfidUser]:
+        return self.context_db.list_users()
+
+    def create_user(
+        self,
+        name: str,
+        mode: UserMode,
+        profile_summary: str | None = None,
+        admin_notes: str | None = None,
+    ) -> RfidUser:
+        return self.context_db.create_user(
+            name=name,
+            mode=mode,
+            profile_summary=profile_summary,
+            admin_notes=admin_notes,
+        )
+
+    def select_user_context(self, device_id: str | None, user_id: str, source: str = "control") -> tuple[RfidUser, DeviceSnapshot]:
+        with self._lock:
+            user = self.context_db.get_user(user_id)
+            if user is None:
+                raise KeyError(user_id)
+            device = self.ensure_device(device_id)
+            session_id = self.context_db.create_session(user_id=user.user_id, device_id=device.device_id, source=source)
+            self._apply_user_context(device, user, session_id, source=source, physical_card=False)
+            self._refresh_counts(device.device_id)
+            return user, device
+
+    def start_rfid_enrollment(
+        self,
+        *,
+        device_id: str | None,
+        user_id: str | None,
+        name: str | None,
+        mode: UserMode,
+        profile_summary: str | None,
+        admin_notes: str | None,
+        ttl_seconds: int,
+    ) -> EnrollmentRecord:
+        device = self.ensure_device(device_id)
+        return self.context_db.start_enrollment(
+            device_id=device.device_id,
+            user_id=user_id,
+            name=name,
+            mode=mode,
+            profile_summary=profile_summary,
+            admin_notes=admin_notes,
+            ttl_seconds=ttl_seconds,
+        )
+
+    def rfid_enrollment_status(self, enroll_id: str) -> EnrollmentRecord | None:
+        return self.context_db.get_enrollment(enroll_id)
+
+    def cancel_rfid_enrollment(self, enroll_id: str) -> EnrollmentRecord | None:
+        return self.context_db.cancel_enrollment(enroll_id)
+
+    def register_rfid(
+        self,
+        uid: str,
+        name: str,
+        mode: UserMode,
+        device_id: str | None,
+        profile_summary: str | None = None,
+        admin_notes: str | None = None,
+    ) -> tuple[RfidUser, DeviceSnapshot]:
         normalized_uid = normalize_uid(uid)
         if not normalized_uid:
             raise ValueError("RFID UID cannot be empty")
         with self._lock:
-            user = RfidUser(uid=normalized_uid, name=name.strip() or normalized_uid, mode=mode, registered_at=now_utc())
-            self._rfid_users[normalized_uid] = user
-            self._save_rfid_users()
+            user = self.context_db.create_user_with_card(
+                uid=normalized_uid,
+                name=name.strip() or normalized_uid,
+                mode=mode,
+                profile_summary=profile_summary,
+                admin_notes=admin_notes,
+                source="manual",
+            )
             device = self.ensure_device(device_id)
-            device.current_user = user
-            device.mode = mode
-            device.online = True
+            session_id = self.context_db.create_session(user_id=user.user_id, device_id=device.device_id, source="manual_register")
+            self._apply_user_context(device, user, session_id, source="manual_register", physical_card=False)
             if device.state == DeviceRunState.offline:
                 device.state = DeviceRunState.idle
             device.last_seen = now_utc()
             self._refresh_counts(device.device_id)
             return user, device
 
-    def scan_rfid(self, uid: str, device_id: str | None) -> tuple[str, RfidUser | None, DeviceSnapshot]:
+    def scan_rfid(self, uid: str, device_id: str | None, source: str = "rc522") -> RfidScanResult:
         normalized_uid = normalize_uid(uid)
         if not normalized_uid:
             raise ValueError("RFID UID cannot be empty")
         with self._lock:
-            user = self._rfid_users.get(normalized_uid)
             device = self.ensure_device(device_id)
+            stamp = now_utc()
+            source_value = (source or "rc522").strip()[:40] or "rc522"
+            user = self.context_db.get_card_user(normalized_uid)
+            enrolled = False
+            enroll_id = None
+            if user is None:
+                enrollment = self.context_db.pending_enrollment_for_device(device.device_id)
+                if enrollment:
+                    completed = self.context_db.complete_enrollment(enrollment.enroll_id, normalized_uid)
+                    user = self.context_db.get_card_user(normalized_uid)
+                    enrolled = user is not None
+                    enroll_id = completed.enroll_id
             device.online = True
-            device.last_seen = now_utc()
+            device.last_seen = stamp
+            self._mark_device_seen(device, stamp)
             device.sensors["last_rfid_uid"] = normalized_uid
             device.sensors["last_rfid_authorized"] = bool(user)
-            device.sensors["last_rfid_at"] = now_utc().isoformat()
+            device.sensors["last_rfid_at"] = stamp.isoformat()
+            device.sensors["last_rfid_source"] = source_value
+            device.sensors["last_rfid_enrolled"] = enrolled
+            if enroll_id:
+                device.sensors["last_rfid_enroll_id"] = enroll_id
             if device.state == DeviceRunState.offline:
                 device.state = DeviceRunState.idle
             if user:
-                device.current_user = user
-                device.mode = user.mode
+                session_source = "rfid_enroll" if enrolled else source_value
+                session_id = self.context_db.create_session(user_id=user.user_id, device_id=device.device_id, source=session_source)
+                self._apply_user_context(
+                    device,
+                    user,
+                    session_id,
+                    source=session_source,
+                    physical_card=source_value == "rc522",
+                )
             else:
-                device.current_user = None
-                device.mode = None
+                self._clear_user_context(device)
+                self.context_db.audit(
+                    "rfid_unknown_denied",
+                    actor=source_value,
+                    device_id=device.device_id,
+                    uid=normalized_uid,
+                )
             self._refresh_counts(device.device_id)
-            return normalized_uid, user, device
+            return RfidScanResult(uid=normalized_uid, user=user, state=device, enrolled=enrolled, enroll_id=enroll_id)
 
     def note_text_turn(
         self,
@@ -203,9 +322,27 @@ class RuntimeStore:
             device.last_asr_text = text
             device.last_assistant = reply
             device.last_speech = (speech or reply).strip() or None
-            self._append_dialogue_turn(device, "user", text, source)
-            self._append_dialogue_turn(device, "assistant", reply, source)
-            device.online = True
+            if device.current_user and device.active_session_id:
+                self.context_db.add_memory_event(
+                    user_id=device.current_user.user_id,
+                    session_id=device.active_session_id,
+                    role="user",
+                    text=text,
+                    source=source,
+                )
+                self.context_db.add_memory_event(
+                    user_id=device.current_user.user_id,
+                    session_id=device.active_session_id,
+                    role="assistant",
+                    text=reply,
+                    source=source,
+                )
+                device.recent_dialogue = self.context_db.recent_dialogue(
+                    user_id=device.current_user.user_id,
+                    session_id=None,
+                )
+            else:
+                device.recent_dialogue = []
             device.last_seen = now_utc()
             self._refresh_counts(device.device_id)
             return device
@@ -220,9 +357,11 @@ class RuntimeStore:
         ok: bool,
         provider: str | None = None,
         error: str | None = None,
+        hardware_seen: bool = False,
     ) -> DeviceSnapshot:
         with self._lock:
             device = self.ensure_device(device_id)
+            stamp = now_utc()
             device.last_asr_text = text
             if ok:
                 device.voice_state = "asr_ok"
@@ -235,17 +374,82 @@ class RuntimeStore:
             device.sensors["last_asr_ok"] = ok
             device.sensors["last_asr_provider"] = provider
             device.sensors["last_asr_error"] = error
-            device.sensors["last_asr_at"] = now_utc().isoformat()
-            device.online = True
-            device.last_seen = now_utc()
+            device.sensors["last_asr_at"] = stamp.isoformat()
+            device.last_seen = stamp
+            if hardware_seen:
+                self._mark_device_seen(device, stamp)
             self._refresh_counts(device.device_id)
             return device
 
-    def enqueue_actions(self, device_id: str | None, specs: list[ActionSpec]) -> list[ActionRecord]:
+    def note_button_event(self, device_id: str | None, line: str, source: str = "stm32") -> DeviceSnapshot:
+        with self._lock:
+            device = self.ensure_device(device_id)
+            stamp = now_utc()
+            clean_line = (line or "").strip()[:120]
+            event = clean_line.removeprefix("BT:BTN:") if clean_line.startswith("BT:BTN:") else clean_line
+            parts = [part for part in event.split(":") if part]
+            duration_ms = None
+            if parts and parts[-1].isdigit():
+                duration_ms = int(parts[-1])
+
+            seq = int(device.sensors.get("last_button_seq") or 0) + 1
+            device.sensors["last_button_seq"] = seq
+            device.sensors["last_button_line"] = clean_line
+            device.sensors["last_button_event"] = event
+            device.sensors["last_button_source"] = (source or "stm32")[:40]
+            device.sensors["last_button_at"] = stamp.isoformat()
+            if duration_ms is not None:
+                device.sensors["last_button_duration_ms"] = duration_ms
+
+            if event.startswith("KEY2:HOLD_START"):
+                device.state = DeviceRunState.recording
+                device.voice_state = "ptt_recording"
+            elif event.startswith("KEY2:UP"):
+                device.state = DeviceRunState.listen
+                device.voice_state = "ptt_uploading"
+            elif event.startswith("KEY2:SHORT") or event.startswith("KEY2:DOWN"):
+                device.state = DeviceRunState.listen
+                device.voice_state = "interrupted"
+            device.last_seen = stamp
+            self._refresh_counts(device.device_id)
+            return device
+
+    def interrupt_seq(self, device_id: str | None) -> int:
+        with self._lock:
+            device = self.ensure_device(device_id)
+            return int(device.sensors.get("interrupt_seq") or 0)
+
+    def interrupt_output(self, device_id: str | None, reason: str = "button") -> DeviceSnapshot:
+        with self._lock:
+            device = self.ensure_device(device_id)
+            stamp = now_utc()
+            device.sensors["interrupt_seq"] = int(device.sensors.get("interrupt_seq") or 0) + 1
+            device.sensors["last_interrupt_reason"] = reason[:40]
+            device.sensors["last_interrupt_at"] = stamp.isoformat()
+            device.voice_state = "interrupted"
+            device.state = DeviceRunState.listen
+            for action in self._actions.get(device.device_id, []):
+                if action.status == ActionStatus.queued and action.type == "tts_speak":
+                    action.status = ActionStatus.failed
+                    action.acked_at = stamp
+                    action.error = "interrupted before send"
+            self._refresh_counts(device.device_id)
+            return device
+
+    def enqueue_actions(
+        self,
+        device_id: str | None,
+        specs: list[ActionSpec],
+        *,
+        control_source: str = "system",
+        control_priority: int = 0,
+    ) -> list[ActionRecord]:
         with self._lock:
             device = self.ensure_device(device_id)
             records: list[ActionRecord] = []
             for spec in uart_safe_action_order(specs):
+                if not self._accept_control_action(device, spec, control_source, control_priority):
+                    continue
                 action_id = f"act_{uuid4().hex[:12]}"
                 command = command_from_action(spec)
                 record = ActionRecord(
@@ -266,6 +470,7 @@ class RuntimeStore:
     def pending_commands(self, device_id: str | None, *, mark_sent: bool) -> list[ActionRecord]:
         with self._lock:
             device = self.ensure_device(device_id)
+            self._mark_device_seen(device)
             actions = [action for action in self._actions[device.device_id] if action.status == ActionStatus.queued]
             if mark_sent:
                 self.mark_actions_sent([action.id for action in actions])
@@ -299,6 +504,7 @@ class RuntimeStore:
             action.acked_at = now_utc()
             action.error = None if ok else (error or "STM32 returned ERR")
             device = self.ensure_device(action.device_id)
+            self._mark_device_seen(device, action.acked_at)
             device.last_ack = {
                 "action_id": action.id,
                 "ok": ok,
@@ -311,7 +517,7 @@ class RuntimeStore:
             else:
                 device.ack_err_count += 1
                 device.state = DeviceRunState.error
-            device.last_seen = now_utc()
+            device.last_seen = action.acked_at
             self._refresh_counts(device.device_id)
             return action, device, ok
 
@@ -338,11 +544,103 @@ class RuntimeStore:
     def _iter_actions(self) -> list[ActionRecord]:
         return [action for actions in self._actions.values() for action in actions]
 
+    def _accept_control_action(
+        self,
+        device: DeviceSnapshot,
+        spec: ActionSpec,
+        control_source: str,
+        control_priority: int,
+    ) -> bool:
+        if spec.type != "lock_control":
+            return True
+
+        requested_state = str(spec.payload.get("state", "")).strip().lower()
+        if requested_state not in {"on", "off"}:
+            return True
+
+        sensors = device.sensors
+        source = (control_source or "system").strip()[:40] or "system"
+        try:
+            current_priority = int(sensors.get("lock_control_priority", -1))
+        except (TypeError, ValueError):
+            current_priority = -1
+        current_state = sensors.get("lock_state")
+
+        if control_priority < current_priority and current_state and requested_state != current_state:
+            sensors["lock_control_skipped_source"] = source
+            sensors["lock_control_skipped_priority"] = control_priority
+            sensors["lock_control_skipped_state"] = requested_state
+            sensors["lock_control_skip_reason"] = f"lower than {sensors.get('lock_control_source', 'unknown')}"
+            sensors["lock_control_skipped_at"] = now_utc().isoformat()
+            return False
+
+        sensors["lock_state"] = requested_state
+        sensors["lock_control_source"] = source
+        sensors["lock_control_priority"] = control_priority
+        sensors["lock_control_at"] = now_utc().isoformat()
+        return True
+
+    def _apply_user_context(
+        self,
+        device: DeviceSnapshot,
+        user: RfidUser,
+        session_id: str,
+        *,
+        source: str,
+        physical_card: bool,
+    ) -> None:
+        device.current_user = user
+        device.active_session_id = session_id
+        device.mode = user.mode
+        device.recent_dialogue = self.context_db.recent_dialogue(user_id=user.user_id, session_id=None)
+        device.sensors["active_user_id"] = user.user_id
+        device.sensors["active_session_id"] = session_id
+        device.sensors["active_context_source"] = source
+        device.sensors["active_context_physical_card"] = physical_card
+        if user.uid:
+            device.sensors["active_rfid_uid"] = user.uid
+
+    def _clear_user_context(self, device: DeviceSnapshot) -> None:
+        device.current_user = None
+        device.active_session_id = None
+        device.mode = None
+        device.recent_dialogue = []
+        device.sensors.pop("active_user_id", None)
+        device.sensors.pop("active_session_id", None)
+        device.sensors.pop("active_context_source", None)
+        device.sensors.pop("active_context_physical_card", None)
+        device.sensors.pop("active_rfid_uid", None)
+
     def _refresh_counts(self, device_id: str) -> None:
         device = self._devices[device_id]
         device.pending_action_count = sum(
             1 for action in self._actions.get(device_id, []) if action.status in {ActionStatus.queued, ActionStatus.sent}
         )
+        self._apply_device_freshness(device)
+
+    def _mark_device_seen(self, device: DeviceSnapshot, stamp: datetime | None = None) -> None:
+        actual_stamp = stamp or now_utc()
+        device.device_last_seen = actual_stamp
+        device.device_age_seconds = 0.0
+        device.online = True
+        device.last_seen = actual_stamp
+
+    def _apply_device_freshness(self, device: DeviceSnapshot, stamp: datetime | None = None) -> None:
+        if device.device_last_seen is None:
+            device.device_age_seconds = None
+            if device.online:
+                device.online = False
+                device.session_connected = False
+                device.uart_ok = False
+            return
+
+        actual_stamp = stamp or now_utc()
+        age_seconds = max(0.0, (actual_stamp - device.device_last_seen).total_seconds())
+        device.device_age_seconds = round(age_seconds, 3)
+        if age_seconds > DEVICE_ONLINE_TTL_SECONDS:
+            device.online = False
+            device.session_connected = False
+            device.uart_ok = False
 
     def _append_dialogue_turn(self, device: DeviceSnapshot, role: str, text: str, source: str | None) -> None:
         message = text.strip()
@@ -358,31 +656,3 @@ class RuntimeStore:
         )
         if len(device.recent_dialogue) > 12:
             device.recent_dialogue = device.recent_dialogue[-12:]
-
-    def _load_rfid_users(self) -> None:
-        if not self._rfid_registry_path or not self._rfid_registry_path.exists():
-            return
-        try:
-            payload = json.loads(self._rfid_registry_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return
-        if not isinstance(payload, list):
-            return
-
-        loaded: dict[str, RfidUser] = {}
-        for item in payload:
-            try:
-                user = RfidUser.model_validate(item)
-            except Exception:
-                continue
-            loaded[user.uid] = user
-        self._rfid_users = loaded
-
-    def _save_rfid_users(self) -> None:
-        if not self._rfid_registry_path:
-            return
-        self._rfid_registry_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = [user.model_dump(mode="json") for user in sorted(self._rfid_users.values(), key=lambda item: item.uid)]
-        temp_path = self._rfid_registry_path.with_suffix(f"{self._rfid_registry_path.suffix}.tmp")
-        temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        temp_path.replace(self._rfid_registry_path)

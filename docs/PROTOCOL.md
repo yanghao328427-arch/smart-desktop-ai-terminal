@@ -21,6 +21,7 @@ WS /api/realtime/ws?device_id=desktop-agent-001&edge_id=esp32s3-sense-001
 {"type":"text","text":"你是谁"}
 {"type":"tools/list"}
 {"type":"tools/call","name":"fan_control","arguments":{"state":"on","speed":70}}
+{"type":"button","line":"BT:BTN:KEY2:DOWN","source":"stm32"}
 {"type":"ping"}
 ```
 
@@ -32,6 +33,8 @@ WS /api/realtime/ws?device_id=desktop-agent-001&edge_id=esp32s3-sense-001
 {"type":"state","state":"think","stage":"agent"}
 {"type":"assistant","text":"...","speech":"..."}
 {"type":"stm32/commands","lines":["NET:CMD:<id>:NET:TTS:..."]}
+{"type":"button","line":"BT:BTN:KEY2:HOLD_START:650","source":"stm32"}
+{"type":"interrupt","reason":"KEY2:DOWN"}
 {"type":"state","state":"idle"}
 ```
 
@@ -45,9 +48,15 @@ WS /api/realtime/ws?device_id=desktop-agent-001&edge_id=esp32s3-sense-001
 | `POST` | `/api/hardware/heartbeat` | ESP32S3 上传在线与 UART 状态 |
 | `GET` | `/api/hardware/commands/{device_id}` | 旧式轮询调试命令 |
 | `POST` | `/api/hardware/ack` | 确认动作执行 |
-| `POST` | `/api/rfid/register` | 注册 RFID 用户 |
-| `POST` | `/api/rfid/scan` | RFID 刷卡登录/解锁 |
-| `POST` | `/api/chat` | Web/移动端文本对话 |
+| `POST` | `/api/hardware/button` | ESP32S3 备用上报 STM32 `BT:BTN:*` 按钮事件 |
+| `GET` | `/api/users` | 列出 SQLite 中的 RFID 用户；需要 `X-Demo-Token` |
+| `POST` | `/api/users` | 创建无卡用户上下文；需要 `X-Demo-Token` |
+| `POST` | `/api/context/select` | 控制口令切换到指定用户上下文；需要 `X-Demo-Token` |
+| `POST` | `/api/rfid/enroll/start` | 发起在线注册，等待下一次真实 RC522 刷卡完成绑定；需要 `X-Demo-Token` |
+| `GET` | `/api/rfid/enroll/{enroll_id}` | 查询在线注册状态；需要 `X-Demo-Token` |
+| `POST` | `/api/rfid/register` | 手动 UID 备选绑定；需要 `X-Demo-Token` |
+| `POST` | `/api/rfid/scan` | RFID 刷卡登录/解锁；网页模拟用 `X-Demo-Token` + `source=web_simulator`，真实 RC522 用 `X-Device-Token` + `source=rc522` |
+| `POST` | `/api/chat` | Web/移动端文本对话；需要已注册卡上下文或 `X-Demo-Token` |
 | `POST` | `/api/asr/transcribe` | 短音频上传与 ASR 识别，支持 mock 文本注入闭环 |
 | `POST` | `/api/realtime/inject` | 后端注入实时会话 |
 | `GET` | `/api/realtime/status` | 实时会话总览 |
@@ -76,7 +85,10 @@ WS /api/realtime/ws?device_id=desktop-agent-001&edge_id=esp32s3-sense-001
 ```text
 NET:CMD:<action_id>:NET:TTSHEX:<utf8_hex>
 NET:CMD:<action_id>:NET:TTS:<text>
+NET:CMD:<action_id>:NET:TTS:STOP
+NET:CMD:<action_id>:NET:VOLUME:<0-16|UP|DOWN>
 NET:CMD:<action_id>:NET:OLED:<text>
+NET:CMD:<action_id>:NET:UI:USER:<user_id>:<uid>:<mode>
 NET:CMD:<action_id>:NET:FAN:ON:2
 NET:CMD:<action_id>:NET:BEEP
 NET:CMD:<action_id>:NET:MUSIC:SUCCESS
@@ -103,15 +115,23 @@ BT:ACK:<action_id>:ERR
 BT:PONG:<uptime_ms>
 BT:{"pot_raw":561,"pot_pct":54,"ntc_raw":1017,"ntc_pct":99,"tracking_signal":false,"aht20_ok":true,"temperature_c":26.4,"humidity_pct":62.0,"distance_ok":true,"distance_enabled":true,"distance_cm":31.4,"distance_zone":"near","env_state":"comfortable","interaction_hint":"object_near","rgb_mode":"sensor","rgb_status":"near_object","rgb_reason":"interaction_zone","encoder_delta":0,"encoder_position":0,"encoder_button":false}
 BT:RGB:mode=sensor,status=near_object,reason=interaction_zone,env=comfortable,distance=near,pot_pct=55,ntc_pct=99,tracking=1
-BT:BTN:KEY2:SHORT
+BT:BTN:KEY1:PAGE:<screen_index>
+BT:BTN:KEY1:HOME
+BT:BTN:KEY2:DOWN
+BT:BTN:KEY2:HOLD_START:<duration_ms>
+BT:BTN:KEY2:UP:<duration_ms>
+BT:BTN:KEY2:SHORT:<duration_ms>
 BT:LOCK:ON
 BT:LOCK:OFF
 ```
+
+按钮语义：`KEY1/PB12` 在 OLED 主状态和信息副屏之间切换，长按回主屏；`KEY2/PB13` 按下即打断当前播报，超过约 600ms 后进入电脑麦克风 PTT 录音，松开立即上传。
 
 调试时仍允许直接发：
 
 ```text
 NET:TTS:你好
+NET:TTS:STOP
 NET:OLED:AI READY
 NET:FAN:OFF
 NET:MUSIC:SUCCESS
@@ -126,6 +146,7 @@ NET:UI:ACTION
 NET:UI:ACK
 NET:UI:IDLE
 NET:UI:ERROR
+NET:UI:USER:user_123:04A1B2C3:STUDY
 NET:UART?
 NET:TELEMETRY?
 NET:ULTRASONIC:ON
@@ -151,7 +172,10 @@ RGB status lighting legend: green heartbeat means ready; cyan pulse means front-
 | Action type | STM32 命令 |
 | --- | --- |
 | `tts_speak` | `NET:TTSHEX:<utf8_hex>` |
+| `audio_stop` | `NET:TTS:STOP` |
+| `volume_control` | `NET:VOLUME:<0-16|UP|DOWN>` |
 | `oled_display` | `NET:OLED:<text>` |
+| `user_context` | `NET:UI:USER:<user_id>:<uid>:<mode>` |
 | `fan_control` | `NET:FAN:ON:<1-3>` 或 `NET:FAN:OFF` |
 | `buzzer_alert` | `NET:BEEP` |
 | `buzzer_music` | `NET:MUSIC:<SUCCESS/ALERT/SCALE/STARTUP/BIRTHDAY/STOP>` |

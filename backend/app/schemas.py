@@ -42,10 +42,14 @@ class HealthResponse(BaseModel):
 
 
 class RfidUser(BaseModel):
-    uid: str
+    user_id: str
+    uid: str | None = None
     name: str
     mode: UserMode
+    profile_summary: str | None = None
+    admin_notes: str | None = None
     registered_at: datetime
+    updated_at: datetime | None = None
 
 
 class DialogueTurn(BaseModel):
@@ -64,8 +68,11 @@ class DeviceSnapshot(BaseModel):
     session_connected: bool = False
     voice_state: str | None = None
     last_seen: datetime | None = None
+    device_last_seen: datetime | None = None
+    device_age_seconds: float | None = None
     sensors: dict[str, Any] = Field(default_factory=dict)
     current_user: RfidUser | None = None
+    active_session_id: str | None = None
     mode: UserMode | None = None
     last_text: str | None = None
     last_asr_text: str | None = None
@@ -101,6 +108,7 @@ class ActionSpec(BaseModel):
 class HardwareActionRequest(ActionSpec):
     device_id: str | None = None
     mark_sent: bool = True
+    source: str = "web_manual"
 
 
 class HardwareActionResponse(BaseModel):
@@ -152,6 +160,8 @@ class RfidRegisterRequest(BaseModel):
     uid: str
     name: str
     mode: UserMode
+    profile_summary: str | None = None
+    admin_notes: str | None = None
     device_id: str | None = None
 
 
@@ -163,11 +173,15 @@ class RfidRegisterResponse(BaseModel):
 class RfidScanRequest(BaseModel):
     uid: str
     device_id: str | None = None
+    source: str = "web_simulator"
 
 
 class RfidScanResponse(BaseModel):
     uid: str
+    source: str
     authorized: bool
+    enrolled: bool = False
+    enroll_id: str | None = None
     message: str
     user: RfidUser | None = None
     state: DeviceSnapshot
@@ -175,10 +189,57 @@ class RfidScanResponse(BaseModel):
     commands: list[str]
 
 
+class UserCreateRequest(BaseModel):
+    name: str
+    mode: UserMode = UserMode.study
+    profile_summary: str | None = None
+    admin_notes: str | None = None
+
+
+class UserResponse(BaseModel):
+    user: RfidUser
+
+
+class UsersResponse(BaseModel):
+    users: list[RfidUser]
+
+
+class ContextSelectRequest(BaseModel):
+    user_id: str
+    device_id: str | None = None
+
+
+class ContextResponse(BaseModel):
+    user: RfidUser
+    state: DeviceSnapshot
+
+
+class RfidEnrollStartRequest(BaseModel):
+    user_id: str | None = None
+    name: str | None = None
+    mode: UserMode = UserMode.study
+    profile_summary: str | None = None
+    admin_notes: str | None = None
+    device_id: str | None = None
+    ttl_seconds: int = Field(default=60, ge=10, le=300)
+
+
+class RfidEnrollStatusResponse(BaseModel):
+    enroll_id: str
+    status: str
+    expires_at: datetime
+    created_at: datetime
+    completed_at: datetime | None = None
+    uid: str | None = None
+    user: RfidUser
+    state: DeviceSnapshot | None = None
+
+
 class ChatRequest(BaseModel):
     text: str
     device_id: str | None = None
     source: str = "web"
+    user_id: str | None = None
 
 
 class ChatResponse(BaseModel):

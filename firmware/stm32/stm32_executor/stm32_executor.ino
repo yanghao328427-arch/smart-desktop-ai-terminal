@@ -2,6 +2,7 @@
 #include <SoftwareSerial.h>
 #include <Wire.h>
 #include "oled_font5x7.h"
+#include "oled_cjk16.h"
 
 // STM32F103C8T6 board baseline from docs/HARDWARE_WIRING.md.
 static const uint32_t ESP_IN_BAUD = 9600;   // ESP32S3 TX -> STM32 PB11 / Serial3 RX
@@ -27,6 +28,11 @@ static const int PIN_DEMO_BUTTON = PB13;  // KEY2 on the Botelvdong STM32 learni
 #else
 static const int PIN_DEMO_BUTTON = DEMO_BUTTON_PIN;
 #endif
+#ifndef INFO_BUTTON_PIN
+static const int PIN_INFO_BUTTON = PB12;  // KEY1: OLED information screen switch.
+#else
+static const int PIN_INFO_BUTTON = INFO_BUTTON_PIN;
+#endif
 
 #ifndef ULTRASONIC_ENABLED_BY_DEFAULT
 #define ULTRASONIC_ENABLED_BY_DEFAULT 1
@@ -37,9 +43,9 @@ static const int PIN_DEMO_BUTTON = DEMO_BUTTON_PIN;
 #endif
 
 static const uint32_t TELEMETRY_INTERVAL_MS = 4000;
-static const uint32_t UI_FRAME_INTERVAL_MS = 120;
+static const uint32_t UI_FRAME_INTERVAL_MS = 80;
 static const uint32_t RGB_FRAME_INTERVAL_MS = 80;
-static const uint32_t OLED_FLUSH_INTERVAL_MS = 12;
+static const uint32_t OLED_FLUSH_INTERVAL_MS = 4;
 static const uint32_t SERVO_PULSE_PERIOD_US = 20000;
 static const uint32_t SERVO_HOLD_MS = 800;
 static const uint16_t SERVO_MIN_PULSE_US = 500;
@@ -53,8 +59,10 @@ static const uint8_t DRV8833_FAN_LEVEL1_DUTY = 217;  // ~85%; lower duty may fai
 static const uint8_t DRV8833_FAN_LEVEL2_DUTY = 235;  // ~92%.
 static const uint8_t DRV8833_FAN_LEVEL3_DUTY = 255;  // Full speed.
 static const uint16_t MUSIC_NOTE_GAP_MS = 35;
-static const uint32_t RGB_EVENT_HOLD_MS = 1800;
-static const uint32_t RGB_ERROR_HOLD_MS = 3200;
+static const uint32_t UI_BOOT_HOLD_MS = 1800;
+static const uint32_t UI_TRANSIENT_HOLD_MS = 2200;
+static const uint32_t UI_SPEAK_HOLD_MS = 7000;
+static const uint32_t RGB_ACK_FLASH_MS = 520;
 static const uint8_t OLED_WIDTH = 128;
 static const uint8_t OLED_HEIGHT = 64;
 static const uint8_t OLED_PAGES = OLED_HEIGHT / 8;
@@ -68,6 +76,9 @@ static const uint8_t UI_PANEL_WIDTH = OLED_WIDTH - UI_PANEL_X - UI_RIGHT_MARGIN;
 static const uint8_t UI_MAX_CHARS = (OLED_WIDTH - UI_TEXT_X - UI_RIGHT_MARGIN) / 6;
 static const uint16_t UI_DEMO_DEFAULT_STEP_MS = 950;
 static const uint32_t BUTTON_DEBOUNCE_MS = 35;
+static const uint32_t KEY2_HOLD_START_MS = 600;
+static const uint32_t KEY1_LONG_PRESS_MS = 700;
+static const uint32_t SCREEN_OVERLAY_MS = 1400;
 static const uint32_t TELEMETRY_ESP_QUIET_MS = 3000;
 
 // RX pin is unused. PB3 is the documented software TX back to ESP32S3.
@@ -108,8 +119,21 @@ bool musicPlaying = false;
 
 static const uint8_t SYN6288_FRAME_HEADER = 0xFD;
 static const uint8_t SYN6288_CMD_SYNTHESIS = 0x01;
+static const uint8_t SYN6288_CMD_STOP = 0x02;
 static const uint8_t SYN6288_TYPE_UNICODE = 0x03;
 static const size_t SYN6288_MAX_TEXT_BYTES = 200;
+static const uint8_t SYN6288_MAX_VOLUME = 16;
+static const uint8_t VOLUME_DEFAULT_PERCENT = 60;
+static const uint8_t VOLUME_MAX_PERCENT = 100;
+static const uint8_t VOLUME_STEP_PERCENT = 10;
+static const int8_t ENCODER_STEPS_PER_DETENT = 4;
+static const uint32_t VOLUME_ANNOUNCE_DELAY_MS = 450;
+
+uint8_t speechVolume = 10;
+uint8_t speechVolumePercent = VOLUME_DEFAULT_PERCENT;
+int8_t encoderVolumeTicks = 0;
+bool volumeAnnouncementPending = false;
+uint32_t lastVolumeChangeMs = 0;
 
 enum UiEventType : uint8_t {
   UI_EVENT_BOOT,
@@ -135,6 +159,26 @@ enum UiEventType : uint8_t {
   UI_EVENT_SERVO,
   UI_EVENT_RFID,
   UI_EVENT_ERROR
+};
+
+enum UiMachineState : uint8_t {
+  UI_STATE_BOOT,
+  UI_STATE_LOCKED,
+  UI_STATE_READY,
+  UI_STATE_LISTENING,
+  UI_STATE_PROCESSING,
+  UI_STATE_SPEAKING,
+  UI_STATE_EXECUTING,
+  UI_STATE_ERROR
+};
+
+enum InfoScreen : uint8_t {
+  INFO_SCREEN_MAIN,
+  INFO_SCREEN_USER,
+  INFO_SCREEN_LINK,
+  INFO_SCREEN_SENSORS,
+  INFO_SCREEN_ACTUATORS,
+  INFO_SCREEN_COUNT
 };
 
 struct RgbState {
@@ -174,6 +218,8 @@ struct ParsedCommand {
 };
 
 UiEventState uiEvent;
+UiMachineState uiMachineState = UI_STATE_BOOT;
+uint32_t uiMachineStateStartedMs = 0;
 uint8_t oledAddress = OLED_ADDR_PRIMARY;
 uint8_t oledBuffer[OLED_WIDTH * OLED_PAGES];
 uint8_t oledFlushPage = 0;
@@ -183,6 +229,11 @@ bool oledRenderPending = false;
 uint32_t lastUiFrameMs = 0;
 uint32_t lastRgbFrameMs = 0;
 uint32_t lastOledFlushMs = 0;
+uint32_t oledFpsWindowMs = 0;
+uint16_t oledFrameCounter = 0;
+uint8_t oledFps = 0;
+InfoScreen infoScreen = INFO_SCREEN_MAIN;
+uint32_t infoOverlayUntilMs = 0;
 uint32_t ackFlashUntilMs = 0;
 bool ackFlashOk = true;
 bool commandLightMeasureActive = false;
@@ -191,9 +242,16 @@ uint32_t commandLightResponseMs = 0;
 bool uiDemoActive = false;
 uint8_t uiDemoIndex = 0;
 uint32_t uiDemoStepStartedMs = 0;
-bool demoButtonLastReading = false;
-bool demoButtonStablePressed = false;
-uint32_t demoButtonLastChangeMs = 0;
+bool key2LastReading = false;
+bool key2StablePressed = false;
+bool key2HoldStartSent = false;
+uint32_t key2LastChangeMs = 0;
+uint32_t key2PressedMs = 0;
+bool infoButtonLastReading = false;
+bool infoButtonStablePressed = false;
+bool infoButtonLongSent = false;
+uint32_t infoButtonLastChangeMs = 0;
+uint32_t infoButtonPressedMs = 0;
 bool rgbSensorMode = true;
 bool latestTelemetryValid = false;
 int latestPotRaw = 0;
@@ -215,6 +273,15 @@ const char *latestEnvState = "unknown";
 const char *latestInteractionHint = "idle";
 const char *latestRgbStatus = "waiting";
 const char *latestRgbReason = "waiting_telemetry";
+String currentUserId = "-";
+String currentCardUid = "-";
+String currentUserMode = "NONE";
+String lastButtonEvent = "-";
+uint32_t lastButtonEventMs = 0;
+uint32_t volumeOverlayUntilMs = 0;
+uint8_t currentFanLevel = 0;
+bool currentLockOn = false;
+bool ttsInterrupted = false;
 
 static const UiDemoStep UI_DEMO_STEPS[] = {
   {UI_EVENT_OLED, "OLED READY", UI_DEMO_DEFAULT_STEP_MS, -1, false, nullptr},
@@ -504,56 +571,23 @@ String buildRgbStatusLine() {
   return line;
 }
 
-RgbState eventBaseRgb(UiEventType type) {
-  switch (type) {
-    case UI_EVENT_BOOT:
+RgbState uiMachineBaseRgb() {
+  switch (uiMachineState) {
+    case UI_STATE_BOOT:
       return rgbState(false, false, true);
-    case UI_EVENT_DEMO:
+    case UI_STATE_LISTENING:
+      return rgbState(false, true, true);
+    case UI_STATE_PROCESSING:
+    case UI_STATE_SPEAKING:
+    case UI_STATE_EXECUTING:
       return rgbState(true, true, false);
-    case UI_EVENT_LISTEN:
-      return rgbState(false, false, true);
-    case UI_EVENT_THINK:
-      return rgbState(true, true, false);
-    case UI_EVENT_ACTION:
-      return rgbState(false, false, true);
-    case UI_EVENT_ACK:
+    case UI_STATE_READY:
       return rgbState(false, true, false);
-    case UI_EVENT_UART:
-      return rgbState(false, true, true);
-    case UI_EVENT_I2C:
-      return rgbState(false, true, true);
-    case UI_EVENT_TELEMETRY:
-      return rgbState(false, false, true);
-    case UI_EVENT_OLED:
-      return rgbState(false, true, true);
-    case UI_EVENT_TTS:
-      return rgbState(false, true, false);
-    case UI_EVENT_FAN_ON:
-      return rgbState(false, true, true);
-    case UI_EVENT_FAN_OFF:
-      return rgbState(false, false, true);
-    case UI_EVENT_BEEP:
-      return rgbState(true, false, true);
-    case UI_EVENT_MUSIC:
-      return rgbState(true, false, true);
-    case UI_EVENT_LOCK_ON:
+    case UI_STATE_LOCKED:
+    case UI_STATE_ERROR:
       return rgbState(true, false, false);
-    case UI_EVENT_LOCK_OFF:
-      return rgbState(false, true, false);
-    case UI_EVENT_AI_BUSY:
-      return rgbState(true, true, false);
-    case UI_EVENT_AI_IDLE:
-      return rgbState(false, true, false);
-    case UI_EVENT_AI_OFF:
-      return rgbState(false, false, false);
-    case UI_EVENT_RFID:
-      return rgbState(false, true, true);
-    case UI_EVENT_ERROR:
-      return rgbState(true, false, false);
-    case UI_EVENT_SERVO:
-      return rgbState(true, true, false);
   }
-  return rgbState(false, false, true);
+  return rgbState(true, false, false);
 }
 
 UiEventType classifyNetCommand(const String &command, const String &actionId) {
@@ -581,8 +615,17 @@ UiEventType classifyNetCommand(const String &command, const String &actionId) {
   if (command == "NET:UI:ERROR") {
     return UI_EVENT_ERROR;
   }
-  if (command.startsWith("NET:UI:")) {
+  if (command == "NET:UI:DEMO") {
     return UI_EVENT_DEMO;
+  }
+  if (command == "NET:UI:DEMO:STOP" || command == "NET:UI:STATUS?") {
+    return UI_EVENT_TELEMETRY;
+  }
+  if (command.startsWith("NET:UI:USER:")) {
+    return UI_EVENT_RFID;
+  }
+  if (command.startsWith("NET:UI:")) {
+    return UI_EVENT_ERROR;
   }
   if (command == "NET:UART?") {
     return UI_EVENT_UART;
@@ -596,7 +639,9 @@ UiEventType classifyNetCommand(const String &command, const String &actionId) {
   if (command.startsWith("NET:RGB:")) {
     return UI_EVENT_TELEMETRY;
   }
-  if (command.startsWith("NET:TTS:") || command.startsWith("NET:TTSHEX:")) {
+  if (command == "NET:TTS:STOP" || command == "NET:AUDIO:STOP" ||
+      command.startsWith("NET:TTS:") || command.startsWith("NET:TTSHEX:") ||
+      command.startsWith("NET:VOLUME:")) {
     return UI_EVENT_TTS;
   }
   if (command.startsWith("NET:OLED:")) {
@@ -636,6 +681,15 @@ UiEventType classifyNetCommand(const String &command, const String &actionId) {
 }
 
 String commandPreview(const String &command) {
+  if (command == "NET:TTS:STOP" || command == "NET:AUDIO:STOP") {
+    return "TTS STOP";
+  }
+  if (command.startsWith("NET:UI:USER:")) {
+    return String("USER ") + compactForDisplay(command.substring(strlen("NET:UI:USER:")), 14);
+  }
+  if (command.startsWith("NET:VOLUME:")) {
+    return String("VOLUME ") + compactForDisplay(command.substring(strlen("NET:VOLUME:")), 4);
+  }
   if (command.startsWith("NET:TTSHEX:")) {
     uint16_t hexChars = command.length() - strlen("NET:TTSHEX:");
     return String("TTSHEX ") + String(hexChars / 2) + "B";
@@ -721,6 +775,8 @@ bool isKnownNetCommandStart(const String &text, int index) {
     "NET:MOTOR:",
     "NET:TTS:",
     "NET:TTSHEX:",
+    "NET:AUDIO:",
+    "NET:VOLUME:",
     "NET:OLED:",
     "NET:BEEP",
     "NET:MUSIC:",
@@ -765,6 +821,67 @@ void setRgb(bool red, bool green, bool blue) {
   }
 }
 
+void enterUiMachineState(UiMachineState state, uint32_t startedMs) {
+  uiMachineState = state;
+  uiMachineStateStartedMs = startedMs;
+  oledRenderPending = true;
+}
+
+void transitionUiMachineForEvent(UiEventType type, uint32_t startedMs) {
+  if (uiMachineState == UI_STATE_LOCKED &&
+      type != UI_EVENT_LOCK_OFF && type != UI_EVENT_ERROR && type != UI_EVENT_AI_OFF) {
+    return;
+  }
+
+  switch (type) {
+    case UI_EVENT_BOOT:
+      enterUiMachineState(UI_STATE_BOOT, startedMs);
+      break;
+    case UI_EVENT_LOCK_ON:
+      enterUiMachineState(UI_STATE_LOCKED, startedMs);
+      break;
+    case UI_EVENT_LOCK_OFF:
+    case UI_EVENT_ACK:
+    case UI_EVENT_AI_IDLE:
+      enterUiMachineState(UI_STATE_READY, startedMs);
+      break;
+    case UI_EVENT_LISTEN:
+      enterUiMachineState(UI_STATE_LISTENING, startedMs);
+      break;
+    case UI_EVENT_THINK:
+    case UI_EVENT_AI_BUSY:
+      enterUiMachineState(UI_STATE_PROCESSING, startedMs);
+      break;
+    case UI_EVENT_TTS:
+      enterUiMachineState(UI_STATE_SPEAKING, startedMs);
+      break;
+    case UI_EVENT_ACTION:
+    case UI_EVENT_FAN_ON:
+    case UI_EVENT_FAN_OFF:
+    case UI_EVENT_BEEP:
+    case UI_EVENT_MUSIC:
+    case UI_EVENT_SERVO:
+    case UI_EVENT_DEMO:
+      enterUiMachineState(UI_STATE_EXECUTING, startedMs);
+      break;
+    case UI_EVENT_ERROR:
+    case UI_EVENT_AI_OFF:
+      enterUiMachineState(UI_STATE_ERROR, startedMs);
+      break;
+    default:
+      break;
+  }
+}
+
+void updateUiMachineState(uint32_t now) {
+  uint32_t age = now - uiMachineStateStartedMs;
+  if ((uiMachineState == UI_STATE_BOOT && age >= UI_BOOT_HOLD_MS) ||
+      (uiMachineState == UI_STATE_EXECUTING && age >= UI_TRANSIENT_HOLD_MS) ||
+      (uiMachineState == UI_STATE_SPEAKING && age >= UI_SPEAK_HOLD_MS)) {
+    enterUiMachineState(UI_STATE_READY, now);
+  }
+}
+
 void beginUiEvent(UiEventType type, const String &detail, const String &actionId, bool wrapped, uint32_t startedMs) {
   uiEvent.type = type;
   uiEvent.detail = detail;
@@ -778,6 +895,7 @@ void beginUiEvent(UiEventType type, const String &detail, const String &actionId
   uiEvent.ackSeen = false;
   uiEvent.ackOk = false;
   uiEvent.wrapped = wrapped;
+  transitionUiMachineForEvent(type, startedMs);
   oledRenderPending = true;
 }
 
@@ -790,7 +908,10 @@ void finishUiEvent(uint32_t parseMs, uint32_t actionMs, uint32_t ackMs, bool ok)
   uiEvent.ackSeen = true;
   uiEvent.ackOk = ok;
   ackFlashOk = ok;
-  ackFlashUntilMs = millis() + 180;
+  ackFlashUntilMs = ok ? 0 : millis() + RGB_ACK_FLASH_MS;
+  if (!ok) {
+    enterUiMachineState(UI_STATE_ERROR, millis());
+  }
   oledRenderPending = true;
 }
 
@@ -873,18 +994,72 @@ void oledDrawText(uint8_t x, uint8_t y, const String &text, uint8_t maxChars, bo
   }
 }
 
-void oledDrawProgress(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint8_t filled) {
-  oledFillRect(x, y, w, h, false);
-  oledFillRect(x, y, w, 1, true);
-  oledFillRect(x, y + h - 1, w, 1, true);
-  oledFillRect(x, y, 1, h, true);
-  oledFillRect(x + w - 1, y, 1, h, true);
-  if (filled > 0 && w > 2 && h > 2) {
-    uint8_t fillWidth = filled;
-    if (fillWidth > w - 2) {
-      fillWidth = w - 2;
+void oledDrawTextCentered(const String &text, uint8_t y, uint8_t maxChars) {
+  uint8_t count = text.length() > maxChars ? maxChars : text.length();
+  uint8_t width = count * 6;
+  oledDrawText((OLED_WIDTH - width) / 2, y, text, maxChars, false);
+}
+
+const OledCjkGlyph *oledFindCjkGlyph(uint16_t codepoint) {
+  for (uint8_t i = 0; i < OLED_CJK16_GLYPH_COUNT; ++i) {
+    if (OLED_CJK16_GLYPHS[i].codepoint == codepoint) {
+      return &OLED_CJK16_GLYPHS[i];
     }
-    oledFillRect(x + 1, y + 1, fillWidth, h - 2, true);
+  }
+  return nullptr;
+}
+
+bool oledNextUtf8Codepoint(const char *text, uint16_t &offset, uint16_t &codepoint) {
+  uint8_t first = (uint8_t)text[offset];
+  if (first == 0) {
+    return false;
+  }
+  offset++;
+  if (first < 0x80) {
+    codepoint = first;
+    return true;
+  }
+  uint8_t second = (uint8_t)text[offset];
+  uint8_t third = (uint8_t)text[offset + 1];
+  if ((first & 0xF0) == 0xE0 && (second & 0xC0) == 0x80 && (third & 0xC0) == 0x80) {
+    offset += 2;
+    codepoint = ((uint16_t)(first & 0x0F) << 12) | ((uint16_t)(second & 0x3F) << 6) | (third & 0x3F);
+    return true;
+  }
+  codepoint = '?';
+  return true;
+}
+
+void oledDrawCjkGlyph(uint8_t x, uint8_t y, uint16_t codepoint) {
+  const OledCjkGlyph *glyph = oledFindCjkGlyph(codepoint);
+  if (glyph == nullptr) {
+    oledFillRect(x + 2, y + 2, 12, 12, true);
+    oledFillRect(x + 4, y + 4, 8, 8, false);
+    return;
+  }
+  for (uint8_t row = 0; row < 16; ++row) {
+    uint16_t bits = ((uint16_t)glyph->bitmap[row * 2] << 8) | glyph->bitmap[row * 2 + 1];
+    for (uint8_t col = 0; col < 16; ++col) {
+      if ((bits & ((uint16_t)1 << (15 - col))) != 0) {
+        oledSetPixel(x + col, y + row, true);
+      }
+    }
+  }
+}
+
+void oledDrawCjkTextCentered(const char *text, uint8_t y) {
+  uint16_t offset = 0;
+  uint16_t codepoint = 0;
+  uint8_t count = 0;
+  while (oledNextUtf8Codepoint(text, offset, codepoint)) {
+    count++;
+  }
+  uint8_t width = count > 8 ? OLED_WIDTH : count * 16;
+  uint8_t x = (OLED_WIDTH - width) / 2;
+  offset = 0;
+  while (oledNextUtf8Codepoint(text, offset, codepoint) && x + 15 < OLED_WIDTH) {
+    oledDrawCjkGlyph(x, y, codepoint);
+    x += 16;
   }
 }
 
@@ -914,136 +1089,163 @@ void oledDrawLine(int x0, int y0, int x1, int y1, bool on) {
   }
 }
 
-void oledDrawRoundedBox(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool on) {
-  oledFillRect(x + 2, y, w - 4, h, on);
-  oledFillRect(x, y + 2, w, h - 4, on);
-  oledSetPixel(x + 1, y + 1, on);
-  oledSetPixel(x + w - 2, y + 1, on);
-  oledSetPixel(x + 1, y + h - 2, on);
-  oledSetPixel(x + w - 2, y + h - 2, on);
+const char *uiMachineCode(UiMachineState state) {
+  switch (state) {
+    case UI_STATE_BOOT: return "S0 BOOT";
+    case UI_STATE_LOCKED: return "S1 LOCKED";
+    case UI_STATE_READY: return "S2 READY";
+    case UI_STATE_LISTENING: return "S3 LISTEN";
+    case UI_STATE_PROCESSING: return "S4 PROCESS";
+    case UI_STATE_SPEAKING: return "S5 SPEAK";
+    case UI_STATE_EXECUTING: return "S6 EXEC";
+    case UI_STATE_ERROR: return "S7 ERROR";
+  }
+  return "S7 ERROR";
 }
 
-void oledDrawEye(uint8_t cx, uint8_t cy, uint8_t w, uint8_t h, int8_t pupilOffset, bool closed, int8_t browTilt) {
-  uint8_t x = cx - w / 2;
-  uint8_t y = cy - h / 2;
-
-  if (closed) {
-    oledDrawLine(x + 2, cy, x + w - 3, cy, true);
-    oledDrawLine(x + 4, cy + 1, x + w - 5, cy + 1, true);
-  } else {
-    oledDrawRoundedBox(x, y, w, h, true);
-    int pupilX = (int)cx + pupilOffset - 3;
-    int pupilY = (int)cy - 4;
-    oledFillRect((uint8_t)pupilX, (uint8_t)pupilY, 6, 8, false);
-    oledSetPixel((uint8_t)(pupilX + 1), (uint8_t)(pupilY + 1), true);
+const char *uiMachineTitle(UiMachineState state) {
+  switch (state) {
+    case UI_STATE_BOOT: return "正在启动";
+    case UI_STATE_LOCKED: return "已锁定";
+    case UI_STATE_READY: return "准备就绪";
+    case UI_STATE_LISTENING: return "正在聆听";
+    case UI_STATE_PROCESSING: return "正在思考";
+    case UI_STATE_SPEAKING: return "正在播报";
+    case UI_STATE_EXECUTING: return "正在执行";
+    case UI_STATE_ERROR: return "操作失败";
   }
+  return "操作失败";
+}
 
-  if (browTilt != 0) {
-    if (browTilt > 0) {
-      oledDrawLine(x + 1, y - 3, x + w - 2, y - 7, true);
-    } else {
-      oledDrawLine(x + 1, y - 7, x + w - 2, y - 3, true);
+const char *uiMachineCompactTitle(UiMachineState state) {
+  switch (state) {
+    case UI_STATE_BOOT: return "BOOT SELF-CHECK";
+    case UI_STATE_LOCKED: return "ACCESS LOCKED";
+    case UI_STATE_READY: return "READY";
+    case UI_STATE_LISTENING: return "LISTEN / PTT";
+    case UI_STATE_PROCESSING: return "AI THINKING";
+    case UI_STATE_SPEAKING: return "SPEAKING";
+    case UI_STATE_EXECUTING: return "EXECUTING";
+    case UI_STATE_ERROR: return "ERROR";
+  }
+  return "ERROR";
+}
+
+void renderStateHeader(UiMachineState state) {
+  oledFillRect(0, 0, OLED_WIDTH, 10, true);
+  oledDrawText(4, 1, uiMachineCode(state), 16, true);
+  oledDrawText(91, 1, String("P") + String((uint8_t)infoScreen), 3, true);
+  oledDrawText(108, 1, String("F") + String(oledFps), 4, true);
+}
+
+void renderStateBody(UiMachineState state) {
+  uint32_t now = millis();
+  oledDrawTextCentered(uiMachineCompactTitle(state), 13, 20);
+  oledDrawLine(4, 24, 123, 24, true);
+
+  switch (state) {
+    case UI_STATE_BOOT:
+      oledDrawText(6, 29, "OLED/AHT/UART CHECK", 20, false);
+      oledDrawText(6, 39, String("I2C 0x") + String(oledAddress, HEX), 20, false);
+      oledDrawText(6, 49, "FEATURES ONLINE...", 20, false);
+      break;
+    case UI_STATE_LOCKED:
+      oledDrawText(6, 29, "USER -", 20, false);
+      oledDrawText(6, 39, "RFID REQUIRED", 20, false);
+      oledDrawText(6, 49, "K1 PAGE  K2 STOP", 20, false);
+      break;
+    case UI_STATE_READY: {
+      String temperature = latestAhtOk ? String(latestTemperatureC, 1) + "C" : "--.-C";
+      String humidity = latestAhtOk ? String(latestHumidityPct, 0) + "%" : "--%";
+      String distance = latestDistanceOk ? String(latestDistanceCm, 0) + "cm" : "--cm";
+      oledDrawText(6, 29, String("USER ") + compactForDisplay(currentUserId, 14), 20, false);
+      oledDrawText(6, 39, temperature + " " + humidity + " " + distance, 20, false);
+      if (now < volumeOverlayUntilMs) {
+        oledDrawText(6, 49, String("VOL ") + String(speechVolumePercent) + "% K1 PAGE", 20, false);
+      } else {
+        oledDrawText(6, 49, "K1 PAGE K2 HOLD REC", 20, false);
+      }
+      break;
     }
+    case UI_STATE_LISTENING:
+      oledDrawText(6, 29, "LAPTOP MIC PTT", 20, false);
+      oledDrawText(6, 39, "RELEASE TO UPLOAD", 20, false);
+      oledDrawText(6, 49, String("USER ") + compactForDisplay(currentUserId, 14), 20, false);
+      break;
+    case UI_STATE_PROCESSING:
+      oledDrawText(6, 29, "ASR/QWEN PIPELINE", 20, false);
+      oledDrawText(6, 39, "WAIT FOR RESULT", 20, false);
+      oledDrawText(6, 49, String("USER ") + compactForDisplay(currentUserId, 14), 20, false);
+      break;
+    case UI_STATE_SPEAKING:
+      oledDrawText(6, 29, "SYN6288 OUTPUT", 20, false);
+      oledDrawText(6, 39, "K2 SHORT: STOP", 20, false);
+      oledDrawText(6, 49, "K2 HOLD: BARGE-IN", 20, false);
+      break;
+    case UI_STATE_EXECUTING:
+      oledDrawText(6, 29, "COMMAND", 20, false);
+      oledDrawText(6, 39, compactForDisplay(uiEvent.detail, 20), 20, false);
+      oledDrawText(6, 49, String("ACK ") + String(uiEvent.ackSeen ? (uiEvent.ackOk ? "OK" : "ERR") : "..."), 20, false);
+      break;
+    case UI_STATE_ERROR:
+      oledDrawText(6, 29, "CHECK LINK / RETRY", 20, false);
+      oledDrawText(6, 39, compactForDisplay(uiEvent.detail, 20), 20, false);
+      oledDrawText(6, 49, String("BTN ") + compactForDisplay(lastButtonEvent, 15), 20, false);
+      break;
   }
 }
 
-void oledDrawSoundWaves(uint8_t phase) {
-  uint8_t y = 24 + (phase % 5);
-  oledDrawLine(13, y, 18, y - 5, true);
-  oledDrawLine(13, y, 18, y + 5, true);
-  oledDrawLine(110, y - 5, 115, y, true);
-  oledDrawLine(110, y + 5, 115, y, true);
-  if ((phase & 0x01) == 0) {
-    oledDrawLine(7, y, 14, y - 8, true);
-    oledDrawLine(7, y, 14, y + 8, true);
-    oledDrawLine(114, y - 8, 121, y, true);
-    oledDrawLine(114, y + 8, 121, y, true);
+void renderInfoScreen(uint32_t now) {
+  switch (infoScreen) {
+    case INFO_SCREEN_USER:
+      oledDrawTextCentered("USER CONTEXT", 13, 20);
+      oledDrawLine(4, 24, 123, 24, true);
+      oledDrawText(6, 29, String("ID ") + compactForDisplay(currentUserId, 17), 20, false);
+      oledDrawText(6, 39, String("CARD ") + compactForDisplay(currentCardUid, 15), 20, false);
+      oledDrawText(6, 49, String("MODE ") + compactForDisplay(currentUserMode, 14), 20, false);
+      break;
+    case INFO_SCREEN_LINK:
+      oledDrawTextCentered("LINK / FPS", 13, 20);
+      oledDrawLine(4, 24, 123, 24, true);
+      oledDrawText(6, 29, String("FPS ") + String(oledFps) + " FLUSH 4MS", 20, false);
+      oledDrawText(6, 39, String("UART ") + (millis() - lastEspRxActivityMs < 5000 ? "ACTIVE" : "QUIET"), 20, false);
+      oledDrawText(6, 49, String("ACK ") + String(uiEvent.ackSeen ? (uiEvent.ackOk ? "OK" : "ERR") : "WAIT"), 20, false);
+      break;
+    case INFO_SCREEN_SENSORS: {
+      String temperature = latestAhtOk ? String(latestTemperatureC, 1) + "C" : "--.-C";
+      String humidity = latestAhtOk ? String(latestHumidityPct, 0) + "%" : "--%";
+      String distance = latestDistanceOk ? String(latestDistanceCm, 0) + "CM" : "--CM";
+      oledDrawTextCentered("SENSORS", 13, 20);
+      oledDrawLine(4, 24, 123, 24, true);
+      oledDrawText(6, 29, temperature + " HUM " + humidity, 20, false);
+      oledDrawText(6, 39, String("DIST ") + distance + " " + latestDistanceZone, 20, false);
+      oledDrawText(6, 49, String("POT ") + String(latestPotPct) + "% NTC " + String(latestNtcPct) + "%", 20, false);
+      break;
+    }
+    case INFO_SCREEN_ACTUATORS:
+      oledDrawTextCentered("ACTUATORS", 13, 20);
+      oledDrawLine(4, 24, 123, 24, true);
+      oledDrawText(6, 29, String("VOL ") + String(speechVolumePercent) + "% FAN L" + String(currentFanLevel), 20, false);
+      oledDrawText(6, 39, String("LOCK ") + (currentLockOn ? "ON" : "OFF") + " RGB " + latestRgbStatus, 20, false);
+      oledDrawText(6, 49, String("BTN ") + compactForDisplay(lastButtonEvent, 15), 20, false);
+      break;
+    case INFO_SCREEN_MAIN:
+    case INFO_SCREEN_COUNT:
+      renderStateBody(uiMachineState);
+      break;
+  }
+  if (now < infoOverlayUntilMs && infoScreen != INFO_SCREEN_MAIN) {
+    oledDrawText(96, 55, "K1>", 4, false);
   }
 }
 
-void oledDrawEnergyBars(uint8_t phase) {
-  for (uint8_t i = 0; i < 7; ++i) {
-    uint8_t bar = 2 + ((phase + i * 2) % 9);
-    oledFillRect(36 + i * 8, 44 - bar, 4, bar, true);
+void renderStatusScreen(uint32_t now) {
+  renderStateHeader(uiMachineState);
+  if (infoScreen == INFO_SCREEN_MAIN) {
+    renderStateBody(uiMachineState);
+  } else {
+    renderInfoScreen(now);
   }
-}
-
-void oledDrawSmallFooter(uint32_t now) {
-  String detail = compactForDisplay(uiEvent.detail, 10);
-  if (detail.length() == 0) {
-    detail = eventLabel(uiEvent.type);
-  }
-  oledDrawText(UI_TEXT_X, 52, detail, 10, false);
-
-  String ms = String(uiEvent.ackSeen ? "ACK" : "T") + ":" + String(uiEvent.ackSeen ? uiEvent.ackMs : (now - uiEvent.startedMs));
-  oledDrawText(82, 52, compactForDisplay(ms, 7), 7, false);
-}
-
-void renderAiFace(uint32_t now) {
-  uint8_t phase = (now / UI_FRAME_INTERVAL_MS) & 0x0F;
-  uint16_t age = now - uiEvent.startedMs;
-  bool blink = (age % 4200) > 4050;
-  int8_t pupil = 0;
-  bool leftClosed = blink;
-  bool rightClosed = blink;
-  int8_t leftBrow = 0;
-  int8_t rightBrow = 0;
-
-  UiEventType faceType = uiEvent.type;
-  if (now < ackFlashUntilMs) {
-    faceType = ackFlashOk ? UI_EVENT_ACK : UI_EVENT_ERROR;
-  }
-
-  switch (faceType) {
-    case UI_EVENT_LISTEN:
-      pupil = ((phase % 4) - 1) * 2;
-      leftClosed = false;
-      rightClosed = false;
-      oledDrawSoundWaves(phase);
-      break;
-    case UI_EVENT_THINK:
-    case UI_EVENT_AI_BUSY:
-      pupil = (phase < 8 ? phase : 15 - phase) - 4;
-      leftBrow = 1;
-      rightBrow = -1;
-      oledDrawEnergyBars(phase);
-      break;
-    case UI_EVENT_ACTION:
-    case UI_EVENT_TTS:
-    case UI_EVENT_FAN_ON:
-    case UI_EVENT_FAN_OFF:
-    case UI_EVENT_BEEP:
-    case UI_EVENT_MUSIC:
-    case UI_EVENT_LOCK_ON:
-    case UI_EVENT_LOCK_OFF:
-    case UI_EVENT_RFID:
-    case UI_EVENT_OLED:
-      pupil = (phase & 0x01) ? 3 : -3;
-      leftBrow = -1;
-      rightBrow = 1;
-      oledDrawEnergyBars(phase + 4);
-      break;
-    case UI_EVENT_ACK:
-    case UI_EVENT_AI_IDLE:
-      leftClosed = (phase & 0x04) != 0;
-      rightClosed = false;
-      oledDrawLine(88, 42, 94, 48, true);
-      oledDrawLine(94, 48, 107, 35, true);
-      break;
-    case UI_EVENT_ERROR:
-      leftBrow = -1;
-      rightBrow = 1;
-      oledDrawLine(28, 42, 100, 42, true);
-      oledDrawLine(30, 44, 98, 44, true);
-      break;
-    default:
-      pupil = ((phase % 8) < 4) ? -1 : 1;
-      break;
-  }
-
-  oledDrawEye(45, 25, 29, 17, pupil, leftClosed, leftBrow);
-  oledDrawEye(83, 25, 29, 17, pupil, rightClosed, rightBrow);
-  oledDrawSmallFooter(now);
 }
 
 bool oledProbe(uint8_t address) {
@@ -1146,7 +1348,20 @@ void renderSystemOled() {
 
   clearOledBuffer();
   uint32_t now = millis();
-  renderAiFace(now);
+  if (oledFpsWindowMs == 0) {
+    oledFpsWindowMs = now;
+  }
+  oledFrameCounter++;
+  if (now - oledFpsWindowMs >= 1000) {
+    uint32_t elapsedMs = now - oledFpsWindowMs;
+    if (elapsedMs == 0) {
+      elapsedMs = 1;
+    }
+    oledFps = (uint8_t)((oledFrameCounter * 1000UL) / elapsedMs);
+    oledFrameCounter = 0;
+    oledFpsWindowMs = now;
+  }
+  renderStatusScreen(now);
   oledFlushPage = 0;
   oledRenderPending = false;
   oledDirty = true;
@@ -1186,57 +1401,6 @@ void flushOledPage() {
   }
 }
 
-bool shouldShowEventRgb(uint32_t now) {
-  if (!rgbSensorMode) {
-    return true;
-  }
-  if (uiDemoActive) {
-    return true;
-  }
-
-  switch (uiEvent.type) {
-    case UI_EVENT_LISTEN:
-    case UI_EVENT_THINK:
-    case UI_EVENT_AI_BUSY:
-    case UI_EVENT_AI_IDLE:
-    case UI_EVENT_AI_OFF:
-      return true;
-    case UI_EVENT_ERROR:
-      return now - uiEvent.startedMs < RGB_ERROR_HOLD_MS;
-    default:
-      return now - uiEvent.startedMs < RGB_EVENT_HOLD_MS;
-  }
-}
-
-void writeSensorRgb(uint32_t now) {
-  if (!latestTelemetryValid) {
-    bool bluePulse = ((now / 500) % 2) == 0;
-    writeRgbRaw(false, false, bluePulse);
-    return;
-  }
-
-  uint16_t phase = now % 2000;
-  if (strcmp(latestRgbStatus, "sensor_check") == 0) {
-    bool doubleBlink = phase < 180 || (phase >= 320 && phase < 500);
-    writeRgbRaw(doubleBlink, false, false);
-  } else if (strcmp(latestRgbStatus, "too_close") == 0) {
-    bool fastBlink = (now % 320) < 160;
-    writeRgbRaw(fastBlink, false, false);
-  } else if (strcmp(latestRgbStatus, "env_watch") == 0) {
-    bool slowBlink = (now % 900) < 520;
-    writeRgbRaw(slowBlink, slowBlink, false);
-  } else if (strcmp(latestRgbStatus, "near_object") == 0) {
-    bool bluePulse = phase < 760;
-    writeRgbRaw(false, true, bluePulse);
-  } else if (strcmp(latestRgbStatus, "tracking_high") == 0) {
-    bool whiteTick = phase < 90;
-    writeRgbRaw(whiteTick, true, true);
-  } else {
-    bool heartbeat = phase < 90;
-    writeRgbRaw(false, true, heartbeat);
-  }
-}
-
 void updateRgbAnimation() {
   uint32_t now = millis();
   if (now - lastRgbFrameMs < RGB_FRAME_INTERVAL_MS) {
@@ -1246,64 +1410,44 @@ void updateRgbAnimation() {
 
   if (now < ackFlashUntilMs) {
     if (ackFlashOk) {
-      writeRgbRaw(false, true, true);
+      bool flashOn = (((ackFlashUntilMs - now) / 130) & 0x01) == 0;
+      writeRgbRaw(false, flashOn, false);
     } else {
       writeRgbRaw(true, false, false);
     }
     return;
   }
 
-  if (!shouldShowEventRgb(now)) {
-    writeSensorRgb(now);
-    return;
-  }
-
-  RgbState base = eventBaseRgb(uiEvent.type);
-  uint16_t phase = (now - uiEvent.startedMs) % 720;
-  bool pulse = phase < 360;
-
-  switch (uiEvent.type) {
-    case UI_EVENT_LISTEN:
-      writeRgbRaw(false, false, true);
+  uint16_t phase = (now - uiMachineStateStartedMs) % 1000;
+  bool pulse = phase < 520;
+  switch (uiMachineState) {
+    case UI_STATE_BOOT:
+      writeRgbRaw(false, false, pulse);
       break;
-    case UI_EVENT_THINK:
-      writeRgbRaw(true, pulse, false);
+    case UI_STATE_LISTENING:
+      writeRgbRaw(false, true, true);
       break;
-    case UI_EVENT_ACTION:
-      writeRgbRaw(false, pulse, true);
+    case UI_STATE_PROCESSING:
+    case UI_STATE_SPEAKING:
+    case UI_STATE_EXECUTING:
+      writeRgbRaw(pulse, pulse, false);
       break;
-    case UI_EVENT_ACK:
+    case UI_STATE_LOCKED:
+    case UI_STATE_ERROR:
+      {
+        bool doubleBlink = phase < 140 || (phase >= 280 && phase < 420);
+        writeRgbRaw(doubleBlink, false, false);
+      }
+      break;
+    case UI_STATE_READY:
       writeRgbRaw(false, true, false);
-      break;
-    case UI_EVENT_AI_BUSY:
-      writeRgbRaw(true, pulse, false);
-      break;
-    case UI_EVENT_TTS:
-      writeRgbRaw(false, true, false);
-      break;
-    case UI_EVENT_BEEP:
-      writeRgbRaw(pulse, false, true);
-      break;
-    case UI_EVENT_MUSIC:
-      writeRgbRaw(pulse, false, true);
-      break;
-    case UI_EVENT_RFID:
-      writeRgbRaw(false, true, pulse);
-      break;
-    case UI_EVENT_ERROR:
-      writeRgbRaw(pulse, false, false);
-      break;
-    case UI_EVENT_AI_OFF:
-      writeRgbRaw(false, false, false);
-      break;
-    default:
-      writeRgbRaw(base.red && pulse, base.green, base.blue && pulse);
       break;
   }
 }
 
 void updateSystemUi() {
   uint32_t now = millis();
+  updateUiMachineState(now);
   updateRgbAnimation();
   if (oledAvailable && (oledRenderPending || now - lastUiFrameMs >= UI_FRAME_INTERVAL_MS)) {
     lastUiFrameMs = now;
@@ -1419,10 +1563,31 @@ bool sendSyn6288Frame(const uint8_t *textBytes, size_t textLen, uint8_t textType
   return true;
 }
 
+bool sendSyn6288Command(uint8_t command) {
+  uint8_t frame[5];
+  frame[0] = SYN6288_FRAME_HEADER;
+  frame[1] = 0x00;
+  frame[2] = 0x01;
+  frame[3] = command;
+  frame[4] = frame[0] ^ frame[1] ^ frame[2] ^ frame[3];
+  espCommandSerial.write(frame, sizeof(frame));
+  espCommandSerial.flush();
+  delay(6);
+  return true;
+}
+
 bool speakUtf8Bytes(const uint8_t *bytes, size_t length) {
   uint8_t unicodeBytes[SYN6288_MAX_TEXT_BYTES];
   size_t unicodeLen = 0;
   size_t index = 0;
+
+  String volumeControl = String("[v") + String(speechVolume) + "]";
+  for (unsigned int i = 0; i < volumeControl.length(); ++i) {
+    if (!appendCodePointAsUtf16Be((uint8_t)volumeControl.charAt(i), unicodeBytes,
+                                  sizeof(unicodeBytes), unicodeLen)) {
+      return false;
+    }
+  }
 
   while (index < length) {
     uint32_t codePoint = 0;
@@ -1438,6 +1603,7 @@ bool speakUtf8Bytes(const uint8_t *bytes, size_t length) {
 }
 
 bool speakText(const String &text) {
+  ttsInterrupted = false;
   return speakUtf8Bytes((const uint8_t *)text.c_str(), text.length());
 }
 
@@ -1455,6 +1621,7 @@ int hexNibble(char ch) {
 }
 
 bool speakHexText(const String &hexText) {
+  ttsInterrupted = false;
   if (hexText.length() == 0 || (hexText.length() % 2) != 0) {
     return false;
   }
@@ -1470,6 +1637,62 @@ bool speakHexText(const String &hexText) {
     utf8Bytes[utf8Len++] = (uint8_t)((high << 4) | low);
   }
   return speakUtf8Bytes(utf8Bytes, utf8Len);
+}
+
+bool stopSpeechOutput() {
+  stopMusic();
+  volumeAnnouncementPending = false;
+  ttsInterrupted = true;
+  oledRenderPending = true;
+  return sendSyn6288Command(SYN6288_CMD_STOP);
+}
+
+uint8_t volumeLevelFromPercent(uint8_t percent) {
+  return (uint8_t)(((uint16_t)percent * SYN6288_MAX_VOLUME + 50) / 100);
+}
+
+uint8_t volumePercentFromLevel(uint8_t level) {
+  return (uint8_t)((((uint16_t)level * 10 + SYN6288_MAX_VOLUME / 2) /
+                    SYN6288_MAX_VOLUME) *
+                   10);
+}
+
+bool setSpeechVolume(const String &value, bool announce) {
+  (void)announce;
+  String normalized = value;
+  normalized.trim();
+  normalized.toUpperCase();
+
+  int percent = speechVolumePercent;
+  if (normalized == "UP") {
+    percent += VOLUME_STEP_PERCENT;
+  } else if (normalized == "DOWN") {
+    percent -= VOLUME_STEP_PERCENT;
+  } else {
+    if (normalized.length() == 0) {
+      return false;
+    }
+    for (unsigned int i = 0; i < normalized.length(); ++i) {
+      if (!isDigit(normalized.charAt(i))) {
+        return false;
+      }
+    }
+    int level = normalized.toInt();
+    if (level < 0) level = 0;
+    if (level > SYN6288_MAX_VOLUME) level = SYN6288_MAX_VOLUME;
+    percent = volumePercentFromLevel((uint8_t)level);
+  }
+
+  if (percent < 0) percent = 0;
+  if (percent > VOLUME_MAX_PERCENT) percent = VOLUME_MAX_PERCENT;
+  speechVolumePercent = (uint8_t)percent;
+  speechVolume = volumeLevelFromPercent(speechVolumePercent);
+  uiEvent.detail = String("VOLUME ") + String(speechVolumePercent) + "%";
+  oledRenderPending = true;
+  lastVolumeChangeMs = millis();
+  volumeOverlayUntilMs = lastVolumeChangeMs + SCREEN_OVERLAY_MS;
+  volumeAnnouncementPending = false;
+  return true;
 }
 
 void logDemoStep(const UiDemoStep &step, uint32_t actionMs) {
@@ -1489,7 +1712,7 @@ void runUiDemoStep(uint8_t index) {
   commandHadLight = false;
   commandLightResponseMs = 0;
   commandLightMeasureActive = true;
-  RgbState cueRgb = eventBaseRgb(step.type);
+  RgbState cueRgb = uiMachineBaseRgb();
   setRgb(cueRgb.red, cueRgb.green, cueRgb.blue);
 
   uint32_t actionStartedMs = millis();
@@ -1541,41 +1764,117 @@ void stopUiDemo() {
   finishUiDemo("DEMO STOP");
 }
 
-void handleConversationButtonPress() {
-  uint32_t startedMs = millis();
-  beginUiEvent(UI_EVENT_LISTEN, "VOICE BUTTON", "key2", false, startedMs);
+void writeButtonEvent(const String &event) {
+  lastButtonEvent = event;
+  lastButtonEventMs = millis();
+  uiEvent.detail = event;
+  oledRenderPending = true;
+  writeBack(String("BT:BTN:") + event);
+}
+
+void handleKey2Pressed(uint32_t now) {
+  uint32_t startedMs = now;
+  beginUiEvent(UI_EVENT_LISTEN, "K2 INTERRUPT", "key2", false, startedMs);
   commandHadLight = false;
   commandLightResponseMs = 0;
   commandLightMeasureActive = true;
   setRgb(false, true, true);
   commandLightMeasureActive = false;
+  stopSpeechOutput();
   finishUiEvent(0, 0, millis() - startedMs, true);
-
-  usbConsole.print("[BUTTON] key2 pin=");
-  usbConsole.println(PIN_DEMO_BUTTON);
-  writeBack("BT:BTN:KEY2:SHORT");
+  writeButtonEvent("KEY2:DOWN");
 }
 
-void updateDemoButton() {
+void handleKey2HoldStart(uint32_t now) {
+  uint32_t duration = now - key2PressedMs;
+  beginUiEvent(UI_EVENT_LISTEN, "PTT RECORDING", "key2", false, now);
+  setRgb(false, true, true);
+  writeButtonEvent(String("KEY2:HOLD_START:") + String(duration));
+}
+
+void handleKey2Released(uint32_t now) {
+  uint32_t duration = now - key2PressedMs;
+  writeButtonEvent(String("KEY2:UP:") + String(duration));
+  if (key2HoldStartSent) {
+    beginUiEvent(UI_EVENT_THINK, "PTT UPLOAD", "key2", false, now);
+  } else {
+    beginUiEvent(UI_EVENT_ACTION, "OUTPUT STOP", "key2", false, now);
+    stopSpeechOutput();
+    writeButtonEvent(String("KEY2:SHORT:") + String(duration));
+  }
+}
+
+void updateKey2Button() {
   bool pressed = digitalRead(PIN_DEMO_BUTTON) == LOW;
   uint32_t now = millis();
 
-  if (pressed != demoButtonLastReading) {
-    demoButtonLastReading = pressed;
-    demoButtonLastChangeMs = now;
+  if (pressed != key2LastReading) {
+    key2LastReading = pressed;
+    key2LastChangeMs = now;
   }
 
-  if (now - demoButtonLastChangeMs < BUTTON_DEBOUNCE_MS) {
+  if (now - key2LastChangeMs < BUTTON_DEBOUNCE_MS) {
     return;
   }
 
-  if (pressed == demoButtonStablePressed) {
+  if (pressed == key2StablePressed) {
+    if (key2StablePressed && !key2HoldStartSent && now - key2PressedMs >= KEY2_HOLD_START_MS) {
+      key2HoldStartSent = true;
+      handleKey2HoldStart(now);
+    }
     return;
   }
 
-  demoButtonStablePressed = pressed;
-  if (demoButtonStablePressed) {
-    handleConversationButtonPress();
+  key2StablePressed = pressed;
+  if (key2StablePressed) {
+    key2PressedMs = now;
+    key2HoldStartSent = false;
+    handleKey2Pressed(now);
+  } else {
+    handleKey2Released(now);
+  }
+}
+
+void handleInfoButtonShort() {
+  uint8_t next = ((uint8_t)infoScreen + 1) % (uint8_t)INFO_SCREEN_COUNT;
+  infoScreen = (InfoScreen)next;
+  infoOverlayUntilMs = millis() + SCREEN_OVERLAY_MS;
+  writeButtonEvent(String("KEY1:PAGE:") + String(next));
+}
+
+void handleInfoButtonLong() {
+  infoScreen = INFO_SCREEN_MAIN;
+  infoOverlayUntilMs = millis() + SCREEN_OVERLAY_MS;
+  writeButtonEvent("KEY1:HOME");
+}
+
+void updateInfoButton() {
+  bool pressed = digitalRead(PIN_INFO_BUTTON) == LOW;
+  uint32_t now = millis();
+
+  if (pressed != infoButtonLastReading) {
+    infoButtonLastReading = pressed;
+    infoButtonLastChangeMs = now;
+  }
+
+  if (now - infoButtonLastChangeMs < BUTTON_DEBOUNCE_MS) {
+    return;
+  }
+
+  if (pressed == infoButtonStablePressed) {
+    if (infoButtonStablePressed && !infoButtonLongSent && now - infoButtonPressedMs >= KEY1_LONG_PRESS_MS) {
+      infoButtonLongSent = true;
+      handleInfoButtonLong();
+    }
+    return;
+  }
+
+  infoButtonStablePressed = pressed;
+  if (infoButtonStablePressed) {
+    infoButtonPressedMs = now;
+    infoButtonLongSent = false;
+  } else if (!infoButtonLongSent) {
+    handleInfoButtonShort();
   }
 }
 
@@ -1608,7 +1907,7 @@ void updateUiDemo() {
 void showOledText(const String &text) {
   usbConsole.print("[OLED] ");
   usbConsole.println(text);
-  uiEvent.detail = String("OLED ") + compactForDisplay(text, 16);
+  uiEvent.detail = String("OLED ") + text;
   oledRenderPending = true;
 }
 
@@ -1777,6 +2076,7 @@ bool playBeep(uint16_t frequency, uint16_t durationMs) {
 }
 
 void stopDrv8833() {
+  currentFanLevel = 0;
   if (!drv8833Connected) {
     return;
   }
@@ -1815,6 +2115,7 @@ bool driveFanOn(uint8_t level) {
   if (!drv8833Connected) {
     return false;
   }
+  currentFanLevel = level < 1 ? 1 : (level > 3 ? 3 : level);
   uint8_t duty = drv8833FanDutyForLevel(level);
   // Current fan wiring spins the useful direction with IN2 PWM and IN1 LOW.
   analogWrite(PIN_DRV8833_IN1, 0);
@@ -1847,8 +2148,20 @@ void updateEncoder() {
   if (delta != 0) {
     encoderPosition += delta;
     encoderDeltaSinceTelemetry += delta;
+    encoderVolumeTicks += delta;
+    if (encoderVolumeTicks >= ENCODER_STEPS_PER_DETENT) {
+      encoderVolumeTicks = 0;
+      setSpeechVolume("UP", true);
+    } else if (encoderVolumeTicks <= -ENCODER_STEPS_PER_DETENT) {
+      encoderVolumeTicks = 0;
+      setSpeechVolume("DOWN", true);
+    }
   }
   encoderLastState = state;
+}
+
+void announceVolumeWhenSettled() {
+  volumeAnnouncementPending = false;
 }
 
 bool parseServoAngle(const String &value, uint8_t &angle) {
@@ -2008,6 +2321,30 @@ bool canSendPeriodicTelemetry() {
   return millis() - lastEspRxActivityMs >= TELEMETRY_ESP_QUIET_MS;
 }
 
+String nextColonField(const String &text, int &offset) {
+  int next = text.indexOf(':', offset);
+  String value = next >= 0 ? text.substring(offset, next) : text.substring(offset);
+  offset = next >= 0 ? next + 1 : text.length();
+  value.trim();
+  return value.length() > 0 ? value : "-";
+}
+
+bool handleUserContextCommand(const String &payload) {
+  int offset = 0;
+  currentUserId = nextColonField(payload, offset);
+  currentCardUid = nextColonField(payload, offset);
+  currentUserMode = nextColonField(payload, offset);
+  currentUserMode.toUpperCase();
+  if (currentUserId == "-" || currentUserMode == "NONE" || currentUserMode == "DENIED") {
+    if (currentUserMode != "DENIED") {
+      currentCardUid = "-";
+    }
+  }
+  uiEvent.detail = String("USER ") + compactForDisplay(currentUserId, 14);
+  oledRenderPending = true;
+  return true;
+}
+
 bool executeNetCommand(const String &command) {
   if (command == "NET:UI:LISTEN" ||
       command == "NET:UI:THINK" ||
@@ -2017,6 +2354,10 @@ bool executeNetCommand(const String &command) {
       command == "NET:UI:IDLE" ||
       command == "NET:UI:ERROR") {
     return true;
+  }
+
+  if (command.startsWith("NET:UI:USER:")) {
+    return handleUserContextCommand(command.substring(strlen("NET:UI:USER:")));
   }
 
   if (command == "NET:UI:DEMO") {
@@ -2037,6 +2378,12 @@ bool executeNetCommand(const String &command) {
     line += oledAvailable ? "OK" : "MISS";
     line += ",addr=0x";
     line += String(oledAddress, HEX);
+    line += ",screen=";
+    line += String((uint8_t)infoScreen);
+    line += ",fps=";
+    line += String(oledFps);
+    line += ",volume_pct=";
+    line += String(speechVolumePercent);
     writeBack(line);
     return true;
   }
@@ -2091,12 +2438,20 @@ bool executeNetCommand(const String &command) {
     return true;
   }
 
+  if (command == "NET:TTS:STOP" || command == "NET:AUDIO:STOP") {
+    return stopSpeechOutput();
+  }
+
   if (command.startsWith("NET:TTS:")) {
     return speakText(command.substring(strlen("NET:TTS:")));
   }
 
   if (command.startsWith("NET:TTSHEX:")) {
     return speakHexText(command.substring(strlen("NET:TTSHEX:")));
+  }
+
+  if (command.startsWith("NET:VOLUME:")) {
+    return setSpeechVolume(command.substring(strlen("NET:VOLUME:")), false);
   }
 
   if (command.startsWith("NET:OLED:")) {
@@ -2137,11 +2492,13 @@ bool executeNetCommand(const String &command) {
   }
 
   if (command == "NET:LOCK:ON") {
+    currentLockOn = true;
     setRgb(true, false, false);
     return true;
   }
 
   if (command == "NET:LOCK:OFF") {
+    currentLockOn = false;
     setRgb(false, true, false);
     return true;
   }
@@ -2213,7 +2570,7 @@ void handleSingleCommandLine(String line, const char *source) {
   commandHadLight = false;
   commandLightResponseMs = 0;
   commandLightMeasureActive = true;
-  RgbState cueRgb = eventBaseRgb(uiEvent.type);
+  RgbState cueRgb = uiMachineBaseRgb();
   setRgb(cueRgb.red, cueRgb.green, cueRgb.blue);
   uint32_t actionStartedMs = millis();
   bool ok = executeNetCommand(parsed.command);
@@ -2308,10 +2665,11 @@ void setup() {
   pinMode(PIN_ENCODER_A, INPUT_PULLUP);
   pinMode(PIN_ENCODER_B, INPUT_PULLUP);
   pinMode(PIN_ENCODER_BUTTON, INPUT_PULLUP);
+  pinMode(PIN_INFO_BUTTON, INPUT_PULLUP);
   pinMode(PIN_DEMO_BUTTON, INPUT_PULLUP);
 
   Wire.begin();
-  Wire.setClock(100000);
+  Wire.setClock(400000);
   aht20Initialized = initializeAht20();
 
   setRgb(false, false, true);
@@ -2330,9 +2688,11 @@ void loop() {
   pollSerial(usbConsole, usbLine, "USB");
   pollSerial(espCommandSerial, espLine, "ESP");
   updateEncoder();
+  announceVolumeWhenSettled();
   updateServoPulse();
   updateMusicPlayer();
-  updateDemoButton();
+  updateInfoButton();
+  updateKey2Button();
   updateUiDemo();
   updateSystemUi();
   if (millis() - lastTelemetryMs >= TELEMETRY_INTERVAL_MS && canSendPeriodicTelemetry()) {

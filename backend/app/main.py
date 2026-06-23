@@ -29,16 +29,50 @@ from .schemas import (
     HardwareActionResponse,
     HealthResponse,
     HeartbeatRequest,
+    ContextResponse,
+    ContextSelectRequest,
     RealtimeInjectRequest,
     RealtimeStatusResponse,
+    RfidEnrollStartRequest,
+    RfidEnrollStatusResponse,
     RfidRegisterRequest,
     RfidRegisterResponse,
     RfidScanRequest,
     RfidScanResponse,
     TelemetryRequest,
+    UserCreateRequest,
+    UserResponse,
+    UsersResponse,
 )
 from .store import RuntimeStore
 from .realtime import ConnectionManager
+
+
+RFID_SPOKEN_NAME_ALIASES = {
+    "student": "学生",
+    "teacher": "老师",
+    "admin": "管理员",
+    "guest": "访客",
+}
+
+
+def rfid_spoken_name(name: str | None) -> str:
+    value = (name or "").strip()
+    if not value:
+        return ""
+    alias = RFID_SPOKEN_NAME_ALIASES.get(value.casefold())
+    if alias:
+        return alias
+    if re.search(r"[\u3400-\u9fff]", value):
+        return value
+    return ""
+
+
+def rfid_access_speech(name: str | None, *, enrolled: bool = False) -> str:
+    spoken_name = rfid_spoken_name(name)
+    if enrolled:
+        return f"{spoken_name}，注册成功。" if spoken_name else "新卡注册成功。"
+    return f"{spoken_name}，解锁成功。" if spoken_name else "解锁成功，欢迎回来。"
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -47,6 +81,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.device_id,
         settings.edge_id,
         rfid_registry_path=settings.rfid_registry_path,
+        context_db_path=settings.context_db_path,
     )
     manager = ConnectionManager(store)
     ai_client = get_ai_client(settings)
@@ -59,9 +94,131 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.ai = ai_client
     app.state.asr = asr_client
 
-    def require_control_token(x_demo_token: str | None = Header(default=None)) -> None:
-        if settings.control_token and x_demo_token != settings.control_token:
+    def control_token_ok(x_demo_token: str | None) -> bool:
+        if not settings.control_token:
+            return True
+        if x_demo_token and x_demo_token != settings.control_token:
             raise HTTPException(status_code=401, detail="control token required")
+        return x_demo_token == settings.control_token
+
+    def require_control_token(x_demo_token: str | None = Header(default=None)) -> None:
+        if not control_token_ok(x_demo_token):
+            raise HTTPException(status_code=401, detail="control token required")
+
+    def require_control_or_device_token(
+        x_demo_token: str | None = Header(default=None),
+        x_device_token: str | None = Header(default=None),
+    ) -> None:
+        if control_token_ok(x_demo_token):
+            return
+        if settings.device_token and x_device_token == settings.device_token:
+            return
+        if not settings.control_token and not settings.device_token:
+            return
+        raise HTTPException(status_code=401, detail="control or device token required")
+
+    def ensure_user_or_control_context(device_id: str, x_demo_token: str | None, user_id: str | None = None) -> bool:
+        if control_token_ok(x_demo_token):
+            if user_id:
+                store.select_user_context(device_id, user_id, source="control_select")
+            return True
+        device = store.ensure_device(device_id)
+        if (
+            device.current_user
+            and device.active_session_id
+            and device.sensors.get("active_context_physical_card") is True
+        ):
+            return False
+        raise HTTPException(status_code=403, detail="registered RFID card or control token required")
+
+    def rfid_control_context(source: str, user: Any | None) -> tuple[str, int]:
+        source_value = (source or "rc522").strip()
+        if source_value == "web_simulator":
+            return "web_simulator", 100
+        if user is None:
+            return "rfid_denied", 80
+        if getattr(user.mode, "value", user.mode) == "admin":
+            return "rfid_admin", 70
+        return "rfid_authorized", 60
+
+    def user_context_action(user: Any | None, uid: str | None = None, mode: str | None = None) -> ActionSpec:
+        if user is None:
+            return ActionSpec(type="user_context", payload={"user_id": "-", "uid": uid or "-", "mode": mode or "NONE"})
+        return ActionSpec(
+            type="user_context",
+            payload={
+                "user_id": user.user_id,
+                "uid": uid or getattr(user, "uid", None) or "-",
+                "mode": getattr(getattr(user, "mode", None), "value", getattr(user, "mode", mode or "NONE")),
+            },
+        )
+
+    async def dispatch_actions(
+        device_id: str,
+        specs: list[ActionSpec],
+        *,
+        control_source: str,
+        control_priority: int,
+    ):
+        actions = store.enqueue_actions(
+            device_id,
+            specs,
+            control_source=control_source,
+            control_priority=control_priority,
+        )
+        commands = [action.wrapped_line for action in actions]
+        delivered = await manager.broadcast(device_id, {"type": "stm32/commands", "lines": commands})
+        if delivered:
+            store.mark_actions_sent([action.id for action in actions])
+        return actions, commands, delivered
+
+    async def handle_button_event(device_id: str, line: str, source: str = "stm32") -> tuple[Any, list[Any], list[str]]:
+        clean_line = (line or "").strip()
+        if not clean_line.startswith("BT:BTN:"):
+            raise ValueError("button line must start with BT:BTN:")
+        state = store.note_button_event(device_id, clean_line, source=source)
+        await manager.broadcast(
+            state.device_id,
+            {
+                "type": "button",
+                "line": clean_line,
+                "source": source,
+                "state": state.model_dump(mode="json"),
+            },
+        )
+
+        event = clean_line.removeprefix("BT:BTN:")
+        actions: list[Any] = []
+        commands: list[str] = []
+        if event.startswith("KEY2:DOWN") or event.startswith("KEY2:SHORT"):
+            state = store.interrupt_output(state.device_id, reason=event[:40])
+            actions, commands, _ = await dispatch_actions(
+                state.device_id,
+                [ActionSpec(type="audio_stop", payload={"reason": event})],
+                control_source="button_interrupt",
+                control_priority=100,
+            )
+            await manager.broadcast(
+                state.device_id,
+                {
+                    "type": "interrupt",
+                    "reason": event,
+                    "state": store.ensure_device(state.device_id).model_dump(mode="json"),
+                },
+            )
+        return store.ensure_device(state.device_id), actions, commands
+
+    def enrollment_response(record: Any, state: Any | None = None) -> RfidEnrollStatusResponse:
+        return RfidEnrollStatusResponse(
+            enroll_id=record.enroll_id,
+            status=record.status,
+            expires_at=record.expires_at,
+            created_at=record.created_at,
+            completed_at=record.completed_at,
+            uid=record.uid,
+            user=record.user,
+            state=state,
+        )
 
     async def emit_state(device_id: str, state: DeviceRunState, **extra: Any) -> None:
         store.set_state(device_id, state, online=True)
@@ -69,10 +226,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     async def run_text_turn(device_id: str, text: str, source: str) -> ChatResponse:
         device = store.ensure_device(device_id)
+        interrupt_seq = store.interrupt_seq(device.device_id)
         await emit_state(device.device_id, DeviceRunState.think, stage="agent")
         plan = await ai_client.plan(text, device)
+        if store.interrupt_seq(device.device_id) != interrupt_seq:
+            state = store.ensure_device(device.device_id)
+            return ChatResponse(
+                device_id=device.device_id,
+                user_text=text,
+                reply="已打断上一轮输出。",
+                speech="",
+                actions=[],
+                commands=[],
+                state=state,
+            )
         store.note_text_turn(device.device_id, text, plan.reply, plan.speech, source=source)
-        actions = store.enqueue_actions(device.device_id, plan.actions)
+        actions = store.enqueue_actions(device.device_id, plan.actions, control_source="ai_chat", control_priority=40)
         commands = [action.wrapped_line for action in actions]
 
         await manager.broadcast(
@@ -147,6 +316,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ok=ok,
             provider=provider,
             error=error,
+            hardware_seen=source.startswith("esp32"),
         )
         await manager.broadcast(
             state.device_id,
@@ -199,6 +369,64 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def get_state(device_id: str):
         return store.ensure_device(device_id)
 
+    @app.get("/api/users", response_model=UsersResponse)
+    def users(_auth: None = Depends(require_control_token)) -> UsersResponse:
+        return UsersResponse(users=store.list_users())
+
+    @app.post("/api/users", response_model=UserResponse)
+    def create_user(payload: UserCreateRequest, _auth: None = Depends(require_control_token)) -> UserResponse:
+        user = store.create_user(
+            payload.name,
+            payload.mode,
+            profile_summary=payload.profile_summary,
+            admin_notes=payload.admin_notes,
+        )
+        return UserResponse(user=user)
+
+    @app.post("/api/context/select", response_model=ContextResponse)
+    async def context_select(payload: ContextSelectRequest, _auth: None = Depends(require_control_token)) -> ContextResponse:
+        try:
+            user, state = store.select_user_context(payload.device_id or settings.device_id, payload.user_id, source="control_select")
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"unknown user_id: {exc.args[0]}") from exc
+        await dispatch_actions(
+            state.device_id,
+            [user_context_action(user)],
+            control_source="control_select",
+            control_priority=100,
+        )
+        return ContextResponse(user=user, state=store.ensure_device(state.device_id))
+
+    @app.post("/api/rfid/enroll/start", response_model=RfidEnrollStatusResponse)
+    def rfid_enroll_start(payload: RfidEnrollStartRequest, _auth: None = Depends(require_control_token)) -> RfidEnrollStatusResponse:
+        try:
+            record = store.start_rfid_enrollment(
+                device_id=payload.device_id or settings.device_id,
+                user_id=payload.user_id,
+                name=payload.name,
+                mode=payload.mode,
+                profile_summary=payload.profile_summary,
+                admin_notes=payload.admin_notes,
+                ttl_seconds=payload.ttl_seconds,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"unknown user_id: {exc.args[0]}") from exc
+        return enrollment_response(record)
+
+    @app.get("/api/rfid/enroll/{enroll_id}", response_model=RfidEnrollStatusResponse)
+    def rfid_enroll_status(enroll_id: str, _auth: None = Depends(require_control_token)) -> RfidEnrollStatusResponse:
+        record = store.rfid_enrollment_status(enroll_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"unknown enroll_id: {enroll_id}")
+        return enrollment_response(record, store.ensure_device(settings.device_id))
+
+    @app.post("/api/rfid/enroll/{enroll_id}/cancel", response_model=RfidEnrollStatusResponse)
+    def rfid_enroll_cancel(enroll_id: str, _auth: None = Depends(require_control_token)) -> RfidEnrollStatusResponse:
+        record = store.cancel_rfid_enrollment(enroll_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"unknown enroll_id: {enroll_id}")
+        return enrollment_response(record, store.ensure_device(settings.device_id))
+
     @app.post("/api/hardware/telemetry")
     async def hardware_telemetry(payload: TelemetryRequest):
         state = store.telemetry(
@@ -233,11 +461,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.post("/api/hardware/action", response_model=HardwareActionResponse)
-    async def hardware_action(payload: HardwareActionRequest, _auth: None = Depends(require_control_token)) -> HardwareActionResponse:
+    async def hardware_action(
+        payload: HardwareActionRequest,
+        x_demo_token: str | None = Header(default=None),
+    ) -> HardwareActionResponse:
+        is_control = ensure_user_or_control_context(payload.device_id or settings.device_id, x_demo_token)
         try:
             actions = store.enqueue_actions(
                 payload.device_id or settings.device_id,
                 [ActionSpec(type=payload.type, payload=payload.payload)],
+                control_source=payload.source if is_control else "rfid_user",
+                control_priority=100 if is_control else 50,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -276,48 +510,114 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return AckResponse(device_id=state.device_id, action_id=action.id, ok=ok, action=action, state=state)
 
+    @app.post("/api/hardware/button")
+    async def hardware_button(
+        payload: dict[str, Any],
+        _auth: None = Depends(require_control_or_device_token),
+    ) -> dict[str, Any]:
+        device_id = str(payload.get("device_id") or settings.device_id)
+        line = str(payload.get("line") or payload.get("event") or "").strip()
+        if line and not line.startswith("BT:BTN:"):
+            line = f"BT:BTN:{line}"
+        try:
+            state, actions, commands = await handle_button_event(
+                device_id,
+                line,
+                source=str(payload.get("source") or "http"),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "ok": True,
+            "device_id": state.device_id,
+            "line": line,
+            "actions": [action.model_dump(mode="json") for action in actions],
+            "commands": commands,
+            "state": state.model_dump(mode="json"),
+        }
+
     @app.post("/api/rfid/register", response_model=RfidRegisterResponse)
     async def rfid_register(payload: RfidRegisterRequest, _auth: None = Depends(require_control_token)) -> RfidRegisterResponse:
         try:
-            user, state = store.register_rfid(payload.uid, payload.name, payload.mode, payload.device_id)
+            user, state = store.register_rfid(
+                payload.uid,
+                payload.name,
+                payload.mode,
+                payload.device_id,
+                profile_summary=payload.profile_summary,
+                admin_notes=payload.admin_notes,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        await dispatch_actions(
+            state.device_id,
+            [user_context_action(user, uid=user.uid)],
+            control_source="rfid_register",
+            control_priority=100,
+        )
         await manager.broadcast(
             state.device_id,
-            {"type": "rfid/user", "user": user.model_dump(mode="json"), "state": state.model_dump(mode="json")},
+            {
+                "type": "rfid/user",
+                "user": user.model_dump(mode="json"),
+                "state": store.ensure_device(state.device_id).model_dump(mode="json"),
+            },
         )
-        return RfidRegisterResponse(user=user, state=state)
+        return RfidRegisterResponse(user=user, state=store.ensure_device(state.device_id))
 
     @app.post("/api/rfid/scan", response_model=RfidScanResponse)
-    async def rfid_scan(payload: RfidScanRequest, _auth: None = Depends(require_control_token)) -> RfidScanResponse:
+    async def rfid_scan(
+        payload: RfidScanRequest,
+        _auth: None = Depends(require_control_or_device_token),
+    ) -> RfidScanResponse:
         try:
-            uid, user, state = store.scan_rfid(payload.uid, payload.device_id)
+            scan = store.scan_rfid(payload.uid, payload.device_id, payload.source)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        uid, user, state = scan.uid, scan.user, scan.state
 
-        if user:
+        if user and scan.enrolled:
+            message = f"新卡已注册，{user.name}，{user.mode.value} 模式。"
+            specs = [
+                user_context_action(user, uid=uid),
+                ActionSpec(type="oled_display", payload={"text": "CARD ENROLLED"}),
+                ActionSpec(type="lock_control", payload={"state": "off"}),
+                ActionSpec(type="tts_speak", payload={"text": rfid_access_speech(user.name, enrolled=True)}),
+            ]
+        elif user:
             message = f"已解锁，{user.name}，{user.mode.value} 模式。"
             specs = [
-                ActionSpec(type="tts_speak", payload={"text": message}),
+                user_context_action(user, uid=uid),
                 ActionSpec(type="oled_display", payload={"text": f"{user.mode.value.upper()} MODE"}),
                 ActionSpec(type="lock_control", payload={"state": "off"}),
+                ActionSpec(type="tts_speak", payload={"text": rfid_access_speech(user.name)}),
             ]
         else:
             message = "未注册卡，已拒绝。"
             specs = [
-                ActionSpec(type="tts_speak", payload={"text": message}),
+                user_context_action(None, uid=uid, mode="DENIED"),
                 ActionSpec(type="oled_display", payload={"text": "CARD DENIED"}),
                 ActionSpec(type="lock_control", payload={"state": "on"}),
+                ActionSpec(type="tts_speak", payload={"text": message}),
             ]
 
-        actions = store.enqueue_actions(state.device_id, specs)
+        control_source, control_priority = rfid_control_context(payload.source, user)
+        actions = store.enqueue_actions(
+            state.device_id,
+            specs,
+            control_source=control_source,
+            control_priority=control_priority,
+        )
         commands = [action.wrapped_line for action in actions]
         await manager.broadcast(
             state.device_id,
             {
                 "type": "rfid/scan",
                 "uid": uid,
+                "source": payload.source,
                 "authorized": bool(user),
+                "enrolled": scan.enrolled,
+                "enroll_id": scan.enroll_id,
                 "user": user.model_dump(mode="json") if user else None,
                 "state": state.model_dump(mode="json"),
             },
@@ -327,7 +627,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             store.mark_actions_sent([action.id for action in actions])
         return RfidScanResponse(
             uid=uid,
+            source=payload.source,
             authorized=bool(user),
+            enrolled=scan.enrolled,
+            enroll_id=scan.enroll_id,
             message=message,
             user=user,
             state=store.ensure_device(state.device_id),
@@ -336,10 +639,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.post("/api/chat", response_model=ChatResponse)
-    async def chat(payload: ChatRequest, _auth: None = Depends(require_control_token)) -> ChatResponse:
+    async def chat(payload: ChatRequest, x_demo_token: str | None = Header(default=None)) -> ChatResponse:
         text = payload.text.strip()
         if not text:
             raise HTTPException(status_code=400, detail="text cannot be empty")
+        ensure_user_or_control_context(payload.device_id or settings.device_id, x_demo_token, payload.user_id)
         return await run_text_turn(payload.device_id or settings.device_id, text, payload.source)
 
     @app.post("/api/asr/transcribe", response_model=AsrTranscribeResponse)
@@ -352,8 +656,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         audio_format: str = Form(""),
         sample_rate: int | None = Form(None),
         channels: int | None = Form(None),
-        _auth: None = Depends(require_control_token),
+        x_demo_token: str | None = Header(default=None),
     ) -> AsrTranscribeResponse:
+        ensure_user_or_control_context(device_id, x_demo_token)
         content = await audio.read()
         return await handle_asr_audio_upload(
             content=content,
@@ -381,7 +686,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         audio_format: str = Form(""),
         sample_rate: int | None = Form(None),
         channels: int | None = Form(None),
+        x_demo_token: str | None = Header(default=None),
     ) -> dict[str, Any] | AsrTranscribeResponse:
+        if inject:
+            ensure_user_or_control_context(device_id, x_demo_token)
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", upload_id):
             raise HTTPException(status_code=400, detail="invalid upload_id")
         if offset < 0 or total_size <= 0:
@@ -445,10 +753,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.post("/api/asr/recognized", response_model=AsrRecognizeResponse)
-    async def asr_recognized(payload: AsrRecognizeRequest, _auth: None = Depends(require_control_token)) -> AsrRecognizeResponse:
+    async def asr_recognized(
+        payload: AsrRecognizeRequest,
+        x_demo_token: str | None = Header(default=None),
+    ) -> AsrRecognizeResponse:
         text = payload.text.strip()
         if not text:
             raise HTTPException(status_code=400, detail="text cannot be empty")
+        ensure_user_or_control_context(payload.device_id or settings.device_id, x_demo_token)
 
         state = store.note_asr_result(
             payload.device_id or settings.device_id,
@@ -486,10 +798,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.post("/api/realtime/inject", response_model=ChatResponse)
-    async def realtime_inject(payload: RealtimeInjectRequest, _auth: None = Depends(require_control_token)) -> ChatResponse:
+    async def realtime_inject(
+        payload: RealtimeInjectRequest,
+        x_demo_token: str | None = Header(default=None),
+    ) -> ChatResponse:
         text = payload.text.strip()
         if not text:
             raise HTTPException(status_code=400, detail="text cannot be empty")
+        ensure_user_or_control_context(payload.device_id or settings.device_id, x_demo_token, payload.user_id)
         return await run_text_turn(payload.device_id or settings.device_id, text, payload.source)
 
     @app.get("/api/realtime/status", response_model=RealtimeStatusResponse)
@@ -557,10 +873,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await websocket.send_json({"type": "stm32/commands", "lines": [action.wrapped_line for action in actions]})
             return
 
+        if message_type == "button":
+            line = str(payload.get("line") or payload.get("event") or "").strip()
+            if line and not line.startswith("BT:BTN:"):
+                line = f"BT:BTN:{line}"
+            try:
+                state, actions, commands = await handle_button_event(
+                    device_id,
+                    line,
+                    source=str(payload.get("source") or "websocket"),
+                )
+            except ValueError as exc:
+                await websocket.send_json({"type": "error", "message": str(exc)})
+                return
+            await websocket.send_json(
+                {
+                    "type": "button/ack",
+                    "line": line,
+                    "commands": commands,
+                    "actions": [action.model_dump(mode="json") for action in actions],
+                    "state": state.model_dump(mode="json"),
+                }
+            )
+            return
+
         if message_type == "text":
             text = str(payload.get("text", "")).strip()
             if not text:
                 await websocket.send_json({"type": "error", "message": "text cannot be empty"})
+                return
+            device = store.ensure_device(device_id)
+            if not device.current_user or not device.active_session_id:
+                await websocket.send_json({"type": "error", "message": "registered RFID card required"})
                 return
             await run_text_turn(device_id, text, "websocket")
             return
@@ -571,6 +915,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "type": "tools/list",
                     "tools": [
                         "tts_speak",
+                        "volume_control",
                         "oled_display",
                         "fan_control",
                         "buzzer_alert",
@@ -585,10 +930,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return
 
         if message_type == "tools/call":
+            device = store.ensure_device(device_id)
+            if not device.current_user or not device.active_session_id:
+                await websocket.send_json({"type": "error", "message": "registered RFID card required"})
+                return
             action_name = str(payload.get("name", "")).strip()
             arguments = payload.get("arguments") or {}
             try:
-                actions = store.enqueue_actions(device_id, [ActionSpec(type=action_name, payload=arguments)])
+                actions = store.enqueue_actions(
+                    device_id,
+                    [ActionSpec(type=action_name, payload=arguments)],
+                    control_source="websocket_tool",
+                    control_priority=40,
+                )
             except ValueError as exc:
                 await websocket.send_json({"type": "error", "message": str(exc)})
                 return

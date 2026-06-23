@@ -19,6 +19,10 @@
 #define SMARTDESK_BOOTSTRAP_SERVER_URL ""
 #endif
 
+#ifndef SMARTDESK_DEVICE_TOKEN
+#define SMARTDESK_DEVICE_TOKEN ""
+#endif
+
 #ifndef SMARTDESK_IOTDA_ENABLED
 #define SMARTDESK_IOTDA_ENABLED 0
 #endif
@@ -74,6 +78,7 @@ PubSubClient iotdaMqtt(iotdaClient);
 String wifiSsid;
 String wifiPassword;
 String serverHost;
+String deviceToken = String(SMARTDESK_DEVICE_TOKEN);
 uint16_t serverPort = 8082;
 bool serverSecure = false;
 bool wsConnected = false;
@@ -87,6 +92,7 @@ unsigned long lastStm32TxMs = 0;
 unsigned long lastUartKeepaliveMs = 0;
 unsigned long lastRfidMs = 0;
 unsigned long lastRfidSeenMs = 0;
+unsigned long lastRfidHealthMs = 0;
 unsigned long lastCommandPollMs = 0;
 unsigned long lastWifiMissingLogMs = 0;
 unsigned long lastIotdaReconnectMs = 0;
@@ -99,8 +105,9 @@ static const unsigned long UART_OK_WINDOW_MS = 15000;
 static const unsigned long UART_KEEPALIVE_INTERVAL_MS = 10000;
 static const unsigned long UART_TX_QUIET_MS = 7000;
 static const unsigned long COMMAND_POLL_INTERVAL_MS = 800;
-static const unsigned long RFID_POLL_INTERVAL_MS = 1000;
+static const unsigned long RFID_POLL_INTERVAL_MS = 200;
 static const unsigned long RFID_REPEAT_SUPPRESS_MS = 15000;
+static const unsigned long RFID_HEALTH_INTERVAL_MS = 5000;
 static const unsigned long WIFI_CONNECT_TIMEOUT_MS = 30000;
 static const bool MIC_PATH_ENABLED = false;
 static const uint32_t MIC_RECORD_SECONDS = 6;
@@ -175,6 +182,7 @@ void saveConfig() {
   prefs.putString("server_host", serverHost);
   prefs.putUShort("server_port", serverPort);
   prefs.putBool("server_secure", serverSecure);
+  prefs.putString("device_token", deviceToken);
   prefs.end();
 }
 
@@ -185,6 +193,7 @@ void loadConfig() {
   serverHost = prefs.getString("server_host", "");
   serverPort = prefs.getUShort("server_port", 8082);
   serverSecure = prefs.getBool("server_secure", false);
+  deviceToken = prefs.getString("device_token", SMARTDESK_DEVICE_TOKEN);
   prefs.end();
 }
 
@@ -331,6 +340,12 @@ String commandFromIotda(const String &commandName, JsonObject paras, bool *accep
       return "";
     }
     return "NET:TTSHEX:" + utf8Hex(text);
+  }
+  if (commandName == "volume_control") {
+    int level = paras["level"] | 10;
+    if (level < 0) level = 0;
+    if (level > 16) level = 16;
+    return "NET:VOLUME:" + String(level);
   }
   if (commandName == "raw_stm32") {
     String command = paras["command"] | "";
@@ -484,6 +499,9 @@ bool postJson(const String &path, const String &body, String *responseOut = null
     return false;
   }
   http.addHeader("Content-Type", "application/json");
+  if (deviceToken.length() > 0) {
+    http.addHeader("X-Device-Token", deviceToken);
+  }
   int code = http.POST(body);
   bool ok = code >= 200 && code < 300;
   if (responseOut != nullptr) {
@@ -567,6 +585,29 @@ void sendAckToBackend(const String &line) {
   if (wsConnected) {
     webSocket.sendTXT(wsPayload);
   }
+}
+
+void sendButtonEventToBackend(const String &line) {
+  JsonDocument doc;
+  doc["type"] = "button";
+  doc["device_id"] = DEVICE_ID;
+  doc["line"] = line;
+  doc["source"] = "stm32";
+  String body;
+  serializeJson(doc, body);
+  if (wsConnected) {
+    webSocket.sendTXT(body);
+    Serial.print("[BTN] forwarded via websocket ");
+    Serial.println(line);
+    return;
+  }
+  if (postJson("/api/hardware/button", body)) {
+    Serial.print("[BTN] forwarded via http ");
+    Serial.println(line);
+    return;
+  }
+  Serial.print("[BTN] forward failed ");
+  Serial.println(line);
 }
 
 bool isAllowedTelemetryKey(const char *key) {
@@ -1449,10 +1490,7 @@ bool captureAndUploadMic(bool inject = true, const String &source = "esp32_mic")
 }
 
 void handleStm32ButtonEvent(const String &line) {
-  if (line == "BT:BTN:KEY2:SHORT") {
-    Serial.println("[BTN] KEY2 ignored; ESP32 mic path disabled");
-    rejectMicPath("KEY2");
-  }
+  sendButtonEventToBackend(line);
 }
 
 bool captureAndUploadMicAfterCue(String cueText, bool inject = true, const String &source = "esp32_mic") {
@@ -1596,6 +1634,34 @@ void probeTcp(String target) {
   probeClient.stop();
 }
 
+bool rfidVersionHealthy(byte version) {
+  return version != 0x00 && version != 0xFF;
+}
+
+byte initializeRfidReader() {
+  SPI.begin(RFID_SCK_PIN, RFID_MISO_PIN, RFID_MOSI_PIN, RFID_SS_PIN);
+  rfid.PCD_Init();
+  delay(4);
+  rfid.PCD_AntennaOn();
+  rfid.PCD_SetAntennaGain(MFRC522::RxGain_max);
+  return rfid.PCD_ReadRegister(MFRC522::VersionReg);
+}
+
+void printRfidStatus(bool probeCard) {
+  byte version = rfid.PCD_ReadRegister(MFRC522::VersionReg);
+  byte gain = rfid.PCD_GetAntennaGain();
+  byte txControl = rfid.PCD_ReadRegister(MFRC522::TxControlReg);
+  bool cardReady = probeCard && rfidCardReady();
+  Serial.printf(
+      "[RFID] status version=0x%02X healthy=%s antenna_gain=0x%02X tx_control=0x%02X card_ready=%s last_uid=%s\n",
+      version,
+      rfidVersionHealthy(version) ? "true" : "false",
+      gain,
+      txControl,
+      cardReady ? "true" : "false",
+      lastRfidUid.length() > 0 ? lastRfidUid.c_str() : "-");
+}
+
 void handleSerialCommand(String line) {
   line.trim();
   if (line.isEmpty()) {
@@ -1650,6 +1716,14 @@ void handleSerialCommand(String line) {
     return;
   }
 
+  if (line.startsWith("CFG:TOKEN:")) {
+    deviceToken = line.substring(strlen("CFG:TOKEN:"));
+    deviceToken.trim();
+    saveConfig();
+    Serial.println(deviceToken.length() > 0 ? "[CFG] device token saved" : "[CFG] device token cleared");
+    return;
+  }
+
   if (line == "CFG:RESET") {
     prefs.begin("smartdesk", false);
     prefs.clear();
@@ -1657,6 +1731,7 @@ void handleSerialCommand(String line) {
     wifiSsid = "";
     wifiPassword = "";
     serverHost = "";
+    deviceToken = String(SMARTDESK_DEVICE_TOKEN);
     serverSecure = false;
     Serial.println("[CFG] cleared");
     return;
@@ -1664,6 +1739,18 @@ void handleSerialCommand(String line) {
 
   if (line == "CFG:UART:PING") {
     sendToStm32("NET:UART?");
+    return;
+  }
+
+  if (line == "CFG:RFID:STATUS") {
+    printRfidStatus(true);
+    return;
+  }
+
+  if (line == "CFG:RFID:RESET") {
+    byte version = initializeRfidReader();
+    Serial.printf("[RFID] reinitialized version=0x%02X\n", version);
+    printRfidStatus(true);
     return;
   }
 
@@ -1808,13 +1895,27 @@ bool rfidCardReady() {
 
 void pollRfid() {
   unsigned long now = millis();
+  if (now - lastRfidHealthMs >= RFID_HEALTH_INTERVAL_MS) {
+    lastRfidHealthMs = now;
+    byte version = rfid.PCD_ReadRegister(MFRC522::VersionReg);
+    byte txControl = rfid.PCD_ReadRegister(MFRC522::TxControlReg);
+    byte gain = rfid.PCD_GetAntennaGain();
+    if (!rfidVersionHealthy(version) || (txControl & 0x03) != 0x03 || gain != MFRC522::RxGain_max) {
+      Serial.printf(
+          "[RFID] reader recovery version=0x%02X tx_control=0x%02X antenna_gain=0x%02X\n",
+          version,
+          txControl,
+          gain);
+      initializeRfidReader();
+    }
+  }
   if (now - lastRfidMs < RFID_POLL_INTERVAL_MS) {
     return;
   }
+  lastRfidMs = now;
   if (!rfidCardReady() || !rfid.PICC_ReadCardSerial()) {
     return;
   }
-  lastRfidMs = now;
   String uid = uidToString(&rfid.uid);
   if (uid == lastRfidUid && now - lastRfidSeenMs < RFID_REPEAT_SUPPRESS_MS) {
     Serial.print("[RFID] repeat skipped ");
@@ -1828,16 +1929,22 @@ void pollRfid() {
 
   Serial.print("[RFID] ");
   Serial.println(uid);
+  sendToStm32("NET:RFID:SCAN:" + uid, 0);
+  sendToStm32("NET:BEEP", 0);
 
   JsonDocument doc;
   doc["device_id"] = DEVICE_ID;
   doc["uid"] = uid;
+  doc["source"] = "rc522";
   String body;
   serializeJson(doc, body);
   String response;
   bool ok = postJson("/api/rfid/scan", body, &response);
   if (!ok) {
     Serial.println("[RFID] scan post failed");
+    sendToStm32("NET:RFID:NETWORK_ERROR", 0);
+  } else {
+    Serial.println("[RFID] scan accepted by backend");
   }
 
   rfid.PICC_HaltA();
@@ -1853,8 +1960,9 @@ void setup() {
   stm32Tx.begin(9600, SERIAL_8N1, -1, STM32_TX_PIN);
   stm32Rx.begin(4800, SERIAL_8N1, STM32_RX_PIN, -1);
 
-  SPI.begin(RFID_SCK_PIN, RFID_MISO_PIN, RFID_MOSI_PIN, RFID_SS_PIN);
-  rfid.PCD_Init();
+  byte rfidVersion = initializeRfidReader();
+  Serial.print("[RFID] reader version=0x");
+  Serial.println(rfidVersion, HEX);
   initMicrophone();
 
   loadConfig();

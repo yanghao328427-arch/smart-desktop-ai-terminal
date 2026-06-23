@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     ai_model: str = "qwen-plus"
     dashscope_api_key: str | None = None
     control_token: str | None = None
+    device_token: str | None = None
 
     asr_provider: str = "dashscope_paraformer"
     asr_ws_url: str = "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
@@ -38,6 +39,7 @@ class Settings(BaseSettings):
     asr_merge_vad: bool = True
     asr_merge_length_s: int = 15
     rfid_registry_path: Path = Path(__file__).resolve().parents[1] / "data" / "rfid_users.json"
+    context_db_path: Path = Path(__file__).resolve().parents[1] / "data" / "context.sqlite3"
 
 
 @lru_cache

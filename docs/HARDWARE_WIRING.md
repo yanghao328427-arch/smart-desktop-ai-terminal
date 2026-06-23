@@ -19,7 +19,7 @@
 - NTC 温度传感器：`PA4`。
 - 电位器：`PA5`。
 - 旋转编码器：`A=PA8`，`B=PA9`，按键 `PB15`。
-- 学习板按键映射：`KEY1=PB12`、`KEY2=PB13`、旋转编码器按键 `PB15`。
+- 学习板按键映射：`KEY1=PB12`、`KEY2=PB13`、旋转编码器按键 `PB15`。当前固件中 `KEY1` 短按切换 OLED 信息副屏、长按回主屏；`KEY2` 短按终止当前播报，长按进入电脑麦克风 PTT 录音、松开立即上传。
 - 继电器输出：控制引脚 `PB5`，常闭 `COM1/常开` 端子按板载丝印接线。
 
 ## ESP32S3 Sense 到 STM32
@@ -95,5 +95,5 @@ The passive buzzer uses the native `PB9` buzzer pin. Firmware supports a short a
 - HCSR04 超声波模块已接入 `TRIG=PA11`、`ECHO=PA10`。固件默认启用测距，遥测应报告 `distance_enabled=true`；只有实测成功后才应出现有效 `distance_cm`。
 - DRV8833 已接入原生位 `PA0/PA1`。蜂鸣器原生脚是 `PB9`，此前把蜂鸣器写成 `PA1` 会导致无声且与 DRV8833 `PWM2` 冲突。当前固件启动时把 DRV8833 双输入保持低电平；深夜静音测试只允许 `NET:MOTOR:OFF`，不做正反转/调速动作。
 - 舵机已接入 `PB8`，当前固件支持 `NET:SERVO:<0-180>`；深夜静音测试不主动发送舵机动作命令。
-- 旋转编码器按学习板资料保留 `A=PA8`、`B=PA9`、按键 `PB15`，遥测字段为 `encoder_delta`、`encoder_position`、`encoder_button`。
+- 旋转编码器按学习板资料保留 `A=PA8`、`B=PA9`、按键 `PB15`，遥测字段为 `encoder_delta`、`encoder_position`、`encoder_button`。旋转只调 SYN6288 音量，每个卡点调整 10%，在 0%/100% 封顶且不循环；OLED 只显示音量百分比，不再播报当前音量。
 - RGB 灯默认进入传感器状态模式：绿色心跳代表健康空闲，青色代表前方交互区/循迹高电平，黄色代表温湿度关注，红色代表过近或传感器需检查，蓝色代表等待首帧遥测。ESP32S3 连线不因该灯光语义变化而改变。

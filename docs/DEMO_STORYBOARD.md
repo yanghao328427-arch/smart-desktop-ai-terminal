@@ -10,9 +10,51 @@
 - 语音输入、RFID、传感器和小程序都服务于这个主线。
 - 不要把演示讲成“播放预制录音”或“固定脚本回放”；固定短句只用于提高答辩稳定性，不改变其本质是实时智能对话。
 
-答辩前可以先打开 `/api/health` 或运行 `tools/cloud_dialogue_smoke.py`，确认 `cloud_ready=true`、`ai_model=qwen-plus`。讲解时可以说：模型密钥只保存在后端本机环境文件中，STM32、ESP32S3、小程序和网页端都拿不到密钥。
+答辩前先运行只读的实时就绪检查，确认 `cloud_ready=true`、ESP32 的 `online=true`、`uart_ok=true`、最近上报不超过 20 秒，并且至少有两项真实传感器字段。讲解时可以说：模型密钥只保存在云端 Secret，STM32、ESP32S3、小程序和网页端都拿不到密钥。
+
+```powershell
+python .\tools\realtime_readiness_check.py
+```
+
+检查脚本只读取 `/api/health`、`/api/state/{device_id}` 和 `/api/realtime/diagnostics/{device_id}`；它不发送聊天、动作或 ACK。输出 `"verdict": "PASS"` 后再开始正式演示。若为 `FAIL`，先查看 `failed_checks`，不要用旧快照冒充实时数据。
+
+若被问到为什么同时接入 Hugging Face 与华为云，可直接说明：Hugging Face 是本次演示的应用云端主链，负责 AI、Web/小程序接口、状态和 ACK；华为云 IoTDA 是 ESP32 的并行 MQTT 设备云扩展，不是页面数据的中转站；华为云 CCI 只是答辩后的可选迁移方案。
+
+## 一键启动整套答辩链路
+
+使用以下任一方式启动：
+
+```powershell
+.\tools\start_defense_demo.cmd
+# 或
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start_defense_demo.ps1
+```
+
+启动器会按顺序：保留已运行的 relay（缺失时才启动一份）→ 等待只读 P0 自检通过 → 打开 Hugging Face 网页控制台 → 经确认后在独立窗口启动笔记本麦克风的持续语音监听。它不修改电脑网络、VPN、DNS、路由或防火墙，也不会自动发送聊天、硬件动作或 ACK。
+
+- 默认语音模式是持续监听器，使用当前已验证的麦克风设备 `1`；用 `-InputDevice 9` 等参数可临时切换录音设备。
+- 若想使用短窗口的“唤醒词 → 指令录音”流程，运行 `.\tools\start_defense_demo.cmd -VoiceMode wakeword`。
+- 若只准备网页/小程序，运行 `.\tools\start_defense_demo.cmd -SkipVoice`。
+- 若只想列出可用录音设备，运行 `.\tools\start_defense_demo.cmd -ListAudioDevices`。
+
+语音前端是**笔记本麦克风临时入口**，启动前会明确提示录音行为；它不应被表述成 ESP32S3 板载麦克风已经完成验收。
 
 ## 演示流程
+
+### 0. 开场自检（30 秒）
+
+操作：
+
+1. 保持 ESP32 已供电、本机 relay 已运行；不改电脑网络、VPN、DNS、路由或防火墙。
+2. 若刚重新插入或重启 ESP32，先等待其完成 Wi-Fi 与 UART 保活启动（现场预留 1—3 分钟）；不要在刚上电时把暂时的 `uart_ok=false` 当作最终故障。
+3. 运行 `python .\tools\realtime_readiness_check.py`。
+4. 展示 `PASS`、云端模型、最近上报时间和传感器字段，然后打开 Web 控制台与微信体验版。
+
+讲解点：
+
+- 先证明“此刻有真实上报”，再展示界面，避免把历史缓存当作实时数据。
+- 网页和小程序读取同一条 Hugging Face 云端状态链路；两端数值应同步变化。
+- “30 秒自检”是脚本执行和判读时间；ESP32 刚上电的启动等待不计入这 30 秒。
 
 ### 1. 四层架构说明
 

@@ -20,6 +20,8 @@ AI_PROVIDER=dashscope_openai
 AI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 AI_MODEL=qwen-plus
 DASHSCOPE_API_KEY=<your_dashscope_api_key>
+CONTROL_TOKEN=<your_web_control_token>
+DEVICE_TOKEN=<your_esp32_device_token>
 
 ASR_PROVIDER=dashscope_paraformer
 ASR_WS_URL=wss://dashscope.aliyuncs.com/api-ws/v1/inference
@@ -38,6 +40,7 @@ EDGE_ID=esp32s3-sense-001
 ```text
 CFG:WIFI:Tenda_2C7AD0,<password>
 CFG:SERVER:http://<backend-lan-ip>:8083
+CFG:TOKEN:<device-token>
 CFG:WIFI:SHOW
 CFG:WIFI:SCAN
 ```
@@ -45,6 +48,7 @@ CFG:WIFI:SCAN
 长期策略：
 
 - ESP32S3 用 NVS/Preferences 保存 Wi-Fi 与服务器地址。
+- ESP32S3 只保存设备侧 `DEVICE_TOKEN`，用于真实 RFID/设备上下文上报，不使用网页 `CONTROL_TOKEN`。
 - 后端 API Key 绝不下发给 ESP32S3。
 - ASR 和 LLM 都由后端代调用。
 
@@ -61,5 +65,6 @@ git diff
 
 - Wi-Fi 密码。
 - DashScope API Key。
+- `CONTROL_TOKEN` / `DEVICE_TOKEN` 真实值。
 - OpenAI 或其他模型平台 Key。
 - 手机号、邮箱等私人信息。

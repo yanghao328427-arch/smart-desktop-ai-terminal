@@ -11,7 +11,7 @@ python -m pytest -q
 
 - WebSocket 能完成 `wake -> text -> assistant -> stm32/commands -> idle`。
 - 动作能转换成 `NET:CMD:<id>:NET:*`。
-- RFID 注册能改变用户模式。
+- RFID 在线注册能把真实 RC522 下一次刷卡绑定到 SQLite 用户上下文。
 - 课程要求清单存在并覆盖四层架构。
 
 云端对话冒烟测试：
@@ -84,14 +84,15 @@ CFG:OLED:LISTEN
 
 1. RC522 接 ESP32S3。
 2. 刷卡读取 UID。
-3. 调用 `/api/rfid/register` 注册为 `study`、`rest`、`demo` 或 `admin`。
-4. 刷卡或调用 `/api/rfid/scan` 后 Web 控制台显示用户模式并生成解锁动作。
+3. 用网页或小程序携带 `CONTROL_TOKEN` 调用 `/api/rfid/enroll/start` 发起在线注册。
+4. 刷真实卡后，后端 `/api/rfid/enroll/{enroll_id}` 显示 `completed`，Web 控制台显示用户模式并生成解锁动作。
+5. 需要调试时，才用 `/api/rfid/register` 手动绑定 UID。
 
 验收：
 
 - 至少一张卡可稳定读出 UID。
-- 未注册卡不会误解锁管理员模式。
-- 已注册卡能改变后端上下文。
+- 未注册卡不会进入任何用户上下文。
+- 已注册卡能改变后端上下文，并且不同 UID 对应不同用户会话。
 
 ## 4. 文本 AI 闭环
 
