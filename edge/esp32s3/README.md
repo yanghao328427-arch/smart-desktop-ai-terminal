@@ -39,3 +39,4 @@ arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32S3 edge/esp32s3/main
 - HALT-state cards are retried with `PICC_WakeupA()`.
 - The onboard ESP32S3 Sense microphone path is intentionally disabled in firmware (`MIC_PATH_ENABLED=false`). `CFG:MIC:*` commands remain rejected. `KEY2/PB13` button events are now forwarded as control events: short press interrupts current output; long press/release is consumed by the laptop-side PTT listener, which records from the computer microphone and uploads to ASR.
 - Use the browser or laptop-side speech listener for voice input while the ESP32S3 bridge continues to forward backend commands and button events between the backend and STM32.
+- `CFG:WS:WAKE` is a USB-only transport diagnostic: when WebSocket is connected, it sends a backend `wake` event so the returned STM32 command and ACK path can be verified without a user-context token.

@@ -15,7 +15,9 @@ FORWARDED_POST_PATHS = {
     "/api/hardware/telemetry",
     "/api/hardware/heartbeat",
     "/api/hardware/ack",
+    "/api/rfid/scan",
 }
+FORWARDED_HEADERS = ("X-Device-Token",)
 
 
 def allowed_path(method: str, path: str) -> bool:
@@ -66,10 +68,15 @@ class RelayHandler(BaseHTTPRequestHandler):
                 return
 
         upstream_url = f"{self.server.upstream_base}{parsed.path}"
+        upstream_headers = {"Content-Type": "application/json"} if method == "POST" else {}
+        for header_name in FORWARDED_HEADERS:
+            header_value = self.headers.get(header_name)
+            if header_value:
+                upstream_headers[header_name] = header_value
         request = Request(
             upstream_url,
             data=body if method == "POST" else None,
-            headers={"Content-Type": "application/json"} if method == "POST" else {},
+            headers=upstream_headers,
             method=method,
         )
         try:

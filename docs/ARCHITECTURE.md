@@ -41,7 +41,7 @@ WebSocket/WSS：实时对话状态、按钮事件、STM32 命令下发和 ACK
 UART：ESP32S3 与 STM32 之间的命令执行和物理回执
 ```
 
-WebSocket 在线时不再轮询 HTTP 命令接口；WebSocket 断开后自动恢复 HTTP 命令轮询，按钮和 ACK 也退回 HTTP。当前本机 `:8091` relay 只转发 HTTP，因此使用 relay 时仍会自然运行在 HTTP 兜底模式；要验收 WebSocket 主路径，需要 ESP32S3 直连支持 WSS 的后端，或另行提供 WebSocket relay。
+WebSocket 在线时不再轮询 HTTP 命令接口；WebSocket 断开后自动恢复 HTTP 命令轮询，按钮和 ACK 也退回 HTTP。当前本机 `:8091` relay 转发心跳、遥测、ACK、RFID 扫描和命令轮询，并透传 RFID 所需的 `X-Device-Token`；使用 relay 时仍会自然运行在 HTTP 兜底模式。要验收 WebSocket 主路径，需要 ESP32S3 直连支持 WSS 的后端，或另行提供 WebSocket relay。
 
 ## 双云分工与边界
 

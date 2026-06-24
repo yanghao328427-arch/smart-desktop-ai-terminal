@@ -12,6 +12,7 @@ python -m pytest -q
 - WebSocket 能完成 `wake -> text -> assistant -> stm32/commands -> idle`。
 - WebSocket 在线时，STM32 ACK 通过 WebSocket 返回并更新 `ack_ok_count`。
 - WebSocket 断开后，ESP32S3 恢复 `/api/hardware/commands/{device_id}` 轮询，ACK 自动退回 `/api/hardware/ack`。
+- 无用户上下文时，可从 ESP32 USB 串口发送 `CFG:WS:WAKE`，验证真实 WSS 命令下发与 STM32 ACK。
 - 动作能转换成 `NET:CMD:<id>:NET:*`。
 - RFID 在线注册能把真实 RC522 下一次刷卡绑定到 SQLite 用户上下文。
 - 课程要求清单存在并覆盖四层架构。

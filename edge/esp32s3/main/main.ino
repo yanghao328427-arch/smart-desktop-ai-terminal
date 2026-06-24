@@ -1799,6 +1799,16 @@ void handleSerialCommand(String line) {
     return;
   }
 
+  if (line == "CFG:WS:WAKE") {
+    if (wsConnected) {
+      webSocket.sendTXT("{\"type\":\"wake\"}");
+      Serial.println("[WS] wake test sent");
+    } else {
+      Serial.println("[WS] wake test unavailable; websocket not connected");
+    }
+    return;
+  }
+
   if (line.startsWith("CHAT:")) {
     JsonDocument doc;
     doc["type"] = "text";
