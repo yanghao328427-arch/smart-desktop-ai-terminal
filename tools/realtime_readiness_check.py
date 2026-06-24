@@ -88,7 +88,18 @@ def main() -> int:
         diagnostics = request_json(
             f"{base_url}/api/realtime/diagnostics/{args.device_id}", args.timeout
         )
-    except (OSError, urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
+    except urllib.error.HTTPError as exc:
+        error = (
+            "HTTP 429: public rate limit active; stop repeated refreshes and retry after cooldown"
+            if exc.code == 429
+            else str(exc)
+        )
+        if args.compact:
+            print(f"verdict=ERROR error={error}")
+        else:
+            print(json.dumps({"verdict": "ERROR", "read_only": True, "error": error}, ensure_ascii=False, indent=2))
+        return 1
+    except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
         if args.compact:
             print(f"verdict=ERROR error={exc}")
         else:

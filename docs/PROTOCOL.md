@@ -41,8 +41,10 @@ WS /api/realtime/ws?device_id=desktop-agent-001&edge_id=esp32s3-sense-001
 传输职责：
 
 - WebSocket 在线时，实时对话状态、按钮事件、STM32 命令下发和 STM32 ACK 优先走该连接。
-- WebSocket 断开时，ESP32S3 自动恢复 HTTP 命令轮询；按钮和 ACK 使用对应 HTTP 接口兜底。
+- 中国境内答辩主链为 `ESP32S3 -> ws://答辩电脑:8091 -> 本机 relay -> wss://Hugging Face`；ESP32 无需直接访问 Hugging Face。
+- WebSocket 断开时，ESP32S3 每 10 秒恢复一次 HTTP 命令轮询；按钮和 ACK 使用对应 HTTP 接口兜底，WSS 每 30 秒尝试重连。
 - 心跳、遥测、RFID、音频上传、用户上下文和常规业务接口继续使用 HTTP/HTTPS。
+- 公网 heartbeat 最短间隔 15 秒，telemetry 最短间隔 10 秒；网页和小程序状态轮询为 30 秒，实时事件仍通过 WebSocket 到达。
 - ESP32S3 与 STM32 之间始终使用 UART，不受公网传输切换影响。
 
 ## 后端 HTTP

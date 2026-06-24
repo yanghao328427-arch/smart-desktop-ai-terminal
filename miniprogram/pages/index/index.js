@@ -1,5 +1,5 @@
 const app = getApp();
-const AUTO_REFRESH_MS = app.globalData.refreshIntervalMs || 5000;
+const AUTO_REFRESH_MS = app.globalData.refreshIntervalMs || 30000;
 const DEFAULT_SUMMARY = {
   protocolText: "-",
   aiText: "-",

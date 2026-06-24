@@ -46,6 +46,18 @@ function Test-RelayListening {
     ).Count -gt 0
 }
 
+function Test-HybridRelay {
+    if (-not (Test-RelayListening)) {
+        return $false
+    }
+    try {
+        $health = Invoke-RestMethod "http://127.0.0.1:$RelayPort/relay/health" -TimeoutSec 2
+        return $health.status -eq "ok" -and $health.mode -eq "http+websocket"
+    } catch {
+        return $false
+    }
+}
+
 function Get-PreferredLanAddress {
     $physicalAdapters = @(
         Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
@@ -151,8 +163,11 @@ function Configure-Esp32Hotspot {
 
 function Start-RelayIfMissing {
     if (Test-RelayListening) {
-        Write-Host "[relay] Existing listener found on port $RelayPort; keeping it."
-        return
+        if (Test-HybridRelay) {
+            Write-Host "[relay] Existing HTTP+WebSocket relay found on port $RelayPort; keeping it."
+            return
+        }
+        throw "Port $RelayPort is occupied by an old or unrelated listener. Stop it, then run the launcher again."
     }
 
     New-Item -ItemType Directory -Force -Path $RelayLogDirectory | Out-Null
@@ -171,8 +186,8 @@ function Start-RelayIfMissing {
 
     for ($attempt = 1; $attempt -le 10; $attempt++) {
         Start-Sleep -Milliseconds 500
-        if (Test-RelayListening) {
-            Write-Host "[relay] Started PID $($process.Id). Logs: $RelayLogDirectory"
+        if (Test-HybridRelay) {
+            Write-Host "[relay] Started HTTP+WebSocket relay PID $($process.Id). Logs: $RelayLogDirectory"
             return
         }
     }
@@ -206,8 +221,8 @@ function Wait-ForReadiness {
         if ((Get-Date) -ge $deadline) {
             throw "Hardware did not become ready within $ReadyWaitSeconds seconds. Confirm ESP32 power/Wi-Fi and its CFG:SERVER address shown above."
         }
-        Write-Host "[check] Not ready; retrying in 5 seconds (ESP32 boot may take 1-3 minutes)."
-        Start-Sleep -Seconds 5
+        Write-Host "[check] Not ready; retrying in 30 seconds (also avoids public rate limits)."
+        Start-Sleep -Seconds 30
     } while ($true)
 }
 

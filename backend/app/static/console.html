@@ -1783,7 +1783,7 @@
     $("control-token").value = "";
     $("control-token").addEventListener("input", () => { pageControlToken = $("control-token").value.trim(); });
     $("control-token").addEventListener("change", () => { pageControlToken = $("control-token").value.trim(); local(pageControlToken ? "控制口令本次页面有效" : "控制口令已清空"); });
-    setInterval(clock, 1000); setInterval(() => refresh().catch((err) => local(err.message)), 2000); clock(); renderLogs(); showView((location.hash || "#home").slice(1) || "home"); refresh().catch((err) => local(err.message));
+    setInterval(clock, 1000); setInterval(() => refresh().catch((err) => local(err.message)), 30000); clock(); renderLogs(); showView((location.hash || "#home").slice(1) || "home"); refresh().catch((err) => local(err.message));
   </script>
 </body>
 </html>

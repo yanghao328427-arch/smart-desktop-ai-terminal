@@ -12,6 +12,8 @@ python -m pytest -q
 - WebSocket 能完成 `wake -> text -> assistant -> stm32/commands -> idle`。
 - WebSocket 在线时，STM32 ACK 通过 WebSocket 返回并更新 `ack_ok_count`。
 - WebSocket 断开后，ESP32S3 恢复 `/api/hardware/commands/{device_id}` 轮询，ACK 自动退回 `/api/hardware/ack`。
+- 本机 relay 的 `/relay/health` 返回 `mode=http+websocket`，ESP32 连接本机 `ws://:8091` 后由电脑桥接到 Hugging Face WSS。
+- Hugging Face 返回 429 后，relay 进入本地冷却并停止继续请求上游；ESP32 仍按 10 秒 HTTP 兜底和 30 秒 WSS 重连节奏运行。
 - 无用户上下文时，可从 ESP32 USB 串口发送 `CFG:WS:WAKE`，验证真实 WSS 命令下发与 STM32 ACK。
 - 实体卡授权后，OLED 自动切到 `USER CONTEXT`，显示用户 ID、卡号和模式。
 - 动作能转换成 `NET:CMD:<id>:NET:*`。

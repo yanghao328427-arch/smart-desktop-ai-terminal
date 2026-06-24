@@ -87,6 +87,7 @@ bool wsStarted = false;
 String usbLine;
 String stm32Line;
 unsigned long lastHeartbeatMs = 0;
+unsigned long lastTelemetryPostMs = 0;
 unsigned long lastAckMs = 0;
 unsigned long lastStm32TxMs = 0;
 unsigned long lastUartKeepaliveMs = 0;
@@ -104,7 +105,9 @@ bool micBusy = false;
 static const unsigned long UART_OK_WINDOW_MS = 15000;
 static const unsigned long UART_KEEPALIVE_INTERVAL_MS = 10000;
 static const unsigned long UART_TX_QUIET_MS = 7000;
-static const unsigned long COMMAND_POLL_INTERVAL_MS = 800;
+static const unsigned long COMMAND_POLL_INTERVAL_MS = 10000;
+static const unsigned long TELEMETRY_POST_INTERVAL_MS = 10000;
+static const unsigned long HEARTBEAT_INTERVAL_MS = 15000;
 static const unsigned long RFID_POLL_INTERVAL_MS = 200;
 static const unsigned long RFID_REPEAT_SUPPRESS_MS = 15000;
 static const unsigned long RFID_HEALTH_INTERVAL_MS = 5000;
@@ -665,6 +668,10 @@ void sendTelemetryToBackend(String line) {
 #if SMARTDESK_IOTDA_ENABLED
   publishTelemetryToIotda(sensors);
 #endif
+  if (lastTelemetryPostMs > 0 && millis() - lastTelemetryPostMs < TELEMETRY_POST_INTERVAL_MS) {
+    return;
+  }
+  lastTelemetryPostMs = millis();
   postJson("/api/hardware/telemetry", body);
 }
 
@@ -823,7 +830,7 @@ void startWebSocket() {
     webSocket.begin(serverHost.c_str(), serverPort, wsPath().c_str());
   }
   webSocket.onEvent(webSocketEvent);
-  webSocket.setReconnectInterval(5000);
+  webSocket.setReconnectInterval(30000);
   webSocket.enableHeartbeat(15000, 3000, 2);
   wsStarted = true;
   Serial.print("[WS] connecting to ");
@@ -842,7 +849,7 @@ bool pauseWebSocketForMicUpload() {
 }
 
 void sendHeartbeat(bool force = false) {
-  if (!force && millis() - lastHeartbeatMs < 5000) {
+  if (!force && millis() - lastHeartbeatMs < HEARTBEAT_INTERVAL_MS) {
     return;
   }
   lastHeartbeatMs = millis();
