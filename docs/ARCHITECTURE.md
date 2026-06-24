@@ -31,6 +31,18 @@ Hugging Face：FastAPI + DashScope AI + 实时状态 / 指令 / ACK
 
 ESP32 当前通过 HTTP relay 上报 heartbeat、遥测与 ACK，并轮询待执行指令；因此 `session_connected=false` 不等于设备离线。网页和小程序都只读取 Hugging Face 的状态接口，展示的是同一台 `desktop-agent-001` 设备的云端快照。
 
+## 实验分支目标传输策略
+
+在不删除现有 HTTP 稳定链路的前提下，ESP32S3 固件采用以下优先级：
+
+```text
+HTTP/HTTPS：鉴权、RFID、用户上下文、音频上传、心跳、遥测和状态查询
+WebSocket/WSS：实时对话状态、按钮事件、STM32 命令下发和 ACK
+UART：ESP32S3 与 STM32 之间的命令执行和物理回执
+```
+
+WebSocket 在线时不再轮询 HTTP 命令接口；WebSocket 断开后自动恢复 HTTP 命令轮询，按钮和 ACK 也退回 HTTP。当前本机 `:8091` relay 只转发 HTTP，因此使用 relay 时仍会自然运行在 HTTP 兜底模式；要验收 WebSocket 主路径，需要 ESP32S3 直连支持 WSS 的后端，或另行提供 WebSocket relay。
+
 ## 双云分工与边界
 
 | 服务 | 角色 | 是否为当前答辩主链必需 |

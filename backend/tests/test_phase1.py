@@ -673,6 +673,10 @@ def test_websocket_text_loop_sends_protocol_events():
         assistant = ws.receive_json()
         commands = ws.receive_json()
         state_idle = ws.receive_json()
+        action_id = commands["lines"][0].split(":", 3)[2]
+
+        ws.send_json({"type": "ack", "line": f"BT:ACK:{action_id}:OK"})
+        ack = ws.receive_json()
 
     assert state_think == {"type": "state", "state": "think", "stage": "agent"}
     assert assistant["type"] == "assistant"
@@ -680,6 +684,10 @@ def test_websocket_text_loop_sends_protocol_events():
     assert commands["type"] == "stm32/commands"
     assert any(":NET:OLED:FOCUS 25 MIN" in line for line in commands["lines"])
     assert state_idle == {"type": "state", "state": "idle"}
+    assert ack["type"] == "ack"
+    assert ack["action_id"] == action_id
+    assert ack["ok"] is True
+    assert ack["state"]["ack_ok_count"] == 1
 
     diagnostics = client.get("/api/realtime/diagnostics/desktop-agent-001").json()
     assert diagnostics["state"]["session_connected"] is False

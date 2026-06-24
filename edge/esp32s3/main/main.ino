@@ -568,22 +568,23 @@ void pollBackendCommands() {
 }
 
 void sendAckToBackend(const String &line) {
+  JsonDocument wsDoc;
+  wsDoc["type"] = "ack";
+  wsDoc["line"] = line;
+  String wsPayload;
+  serializeJson(wsDoc, wsPayload);
+  if (wsConnected && webSocket.sendTXT(wsPayload)) {
+    Serial.println("[ACK] forwarded via websocket");
+    return;
+  }
+
   JsonDocument httpDoc;
   httpDoc["device_id"] = DEVICE_ID;
   httpDoc["line"] = line;
   String body;
   serializeJson(httpDoc, body);
   if (postJson("/api/hardware/ack", body)) {
-    return;
-  }
-
-  JsonDocument wsDoc;
-  wsDoc["type"] = "ack";
-  wsDoc["line"] = line;
-  String wsPayload;
-  serializeJson(wsDoc, wsPayload);
-  if (wsConnected) {
-    webSocket.sendTXT(wsPayload);
+    Serial.println("[ACK] forwarded via http fallback");
   }
 }
 
