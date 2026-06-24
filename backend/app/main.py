@@ -374,6 +374,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def get_state(device_id: str):
         return store.ensure_device(device_id)
 
+    @app.post("/api/auth/verify")
+    def verify_administrator_password(
+        _auth: None = Depends(require_control_token),
+    ) -> dict[str, str | bool]:
+        return {"ok": True, "role": "administrator"}
+
     @app.get("/api/users", response_model=UsersResponse)
     def users(_auth: None = Depends(require_control_token)) -> UsersResponse:
         return UsersResponse(users=store.list_users())

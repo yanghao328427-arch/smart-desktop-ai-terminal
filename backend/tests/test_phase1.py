@@ -102,6 +102,9 @@ def test_health_reports_var_lib_context_database_as_persistent(tmp_path):
 def test_control_token_protects_public_mutations():
     client = make_client(control_token="secret-token")
 
+    verify_blocked = client.post("/api/auth/verify")
+    verify_wrong = client.post("/api/auth/verify", headers={"X-Demo-Token": "wrong"})
+    verify_allowed = client.post("/api/auth/verify", headers={"X-Demo-Token": "secret-token"})
     blocked = client.post("/api/chat", json={"text": "你是谁"})
     wrong = client.post("/api/chat", headers={"X-Demo-Token": "wrong"}, json={"text": "你是谁"})
     allowed = client.post("/api/chat", headers={"X-Demo-Token": "secret-token"}, json={"text": "你是谁"})
@@ -112,6 +115,10 @@ def test_control_token_protects_public_mutations():
         json={"uid": "04A1B2C3", "source": "web_simulator"},
     )
 
+    assert verify_blocked.status_code == 401
+    assert verify_wrong.status_code == 401
+    assert verify_allowed.status_code == 200
+    assert verify_allowed.json() == {"ok": True, "role": "administrator"}
     assert blocked.status_code == 403
     assert wrong.status_code == 401
     assert allowed.status_code == 200

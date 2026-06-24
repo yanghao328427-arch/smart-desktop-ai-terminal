@@ -43,7 +43,7 @@
         <view><text>链路总览</text><text>云端、设备、UART、ACK</text></view><text>›</text>
       </button>
       <button class="menu-item" data-view="security" bindtap="setView">
-        <view><text>安全设置</text><text>控制口令 {{tokenSavedText}}</text></view><text>›</text>
+        <view><text>安全设置</text><text>管理员密码 {{tokenSavedText}}</text></view><text>›</text>
       </button>
       <button class="menu-item" data-view="control" bindtap="setView">
         <view><text>硬件控制</text><text>风扇、蜂鸣、锁定、解锁</text></view><text>›</text>
@@ -92,15 +92,15 @@
 
   <block wx:elif="{{currentView == 'security'}}">
     <view class="panel security-panel">
-      <view class="panel-title"><text>控制保护</text><text>{{tokenSavedText}}</text></view>
+      <view class="panel-title"><text>管理员权限</text><text>{{tokenSavedText}}</text></view>
       <view class="security-card {{tokenSaved ? 'ok' : 'warn'}}">
-        <text>{{tokenSaved ? '本次打开期间可用' : '未输入控制口令，只能刷已注册卡进入上下文'}}</text>
-        <text>状态读取公开；控制、对话、RFID、ASR 写入必须携带口令。</text>
+        <text>{{tokenSaved ? '管理员密码正确，本次打开期间可用' : '未验证管理员密码，只能刷已注册卡进入上下文'}}</text>
+        <text>状态读取公开；控制、对话、RFID、ASR 写入需要管理员密码。</text>
       </view>
       <view class="form-stack">
-        <input password="true" value="{{controlTokenDraft}}" placeholder="输入 CONTROL_TOKEN" bindinput="onControlTokenInput" />
-        <button bindtap="saveControlToken">本次启用</button>
-        <button class="secondary danger" bindtap="clearControlToken">清除本次口令</button>
+        <input password="true" value="{{controlTokenDraft}}" placeholder="输入管理员密码" bindinput="onControlTokenInput" />
+        <button bindtap="saveControlToken">验证管理员密码</button>
+        <button class="secondary danger" bindtap="clearControlToken">清除管理员密码</button>
         <button class="secondary" data-view="diagnostics" bindtap="setView">打开后台日志</button>
       </view>
     </view>

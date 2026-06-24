@@ -1547,7 +1547,7 @@
           <h3>系统状态</h3>
           <div class="ready-row"><strong id="system-ready-text">等待刷新</strong><span id="system-ready-mark" class="tiny-pill warn">…</span></div>
           <div class="status-line"><span>WebSocket</span><button class="status-value" id="connect" type="button">连接 WS</button></div>
-          <div class="status-line"><span>后端服务</span><span class="status-value" id="backend-status">未检查</span></div><div class="status-line"><span>控制口令</span><input id="control-token" type="password" placeholder="本次打开有效" autocomplete="off"></div>
+          <div class="status-line"><span>后端服务</span><span class="status-value" id="backend-status">未检查</span></div><div class="status-line"><span>管理员密码</span><input id="control-token" type="password" placeholder="输入后自动验证" autocomplete="off"></div><div class="status-line"><span>密码状态</span><span id="admin-password-status" class="status-value">未输入</span></div>
           <div class="status-line"><span>设备运行</span><span id="uptime">未上报</span></div>
           <button class="refresh-btn" id="refresh" type="button">刷新状态</button>
         </div>
@@ -1585,7 +1585,7 @@
           </article>
           <article id="loop" class="card loop-panel view"><div class="card-title"><h2>闭环链路（实时）</h2><span id="loop-ready-pill" class="tiny-pill warn">等待数据</span></div><div class="loop-body"><div id="loop-steps" class="loop-icons"></div><div id="loop-events" class="loop-events"></div><div class="ready-banner"><span id="loop-state">等待真实链路</span><span id="loop-summary">等待真实输入、执行与 ACK</span></div></div></article>
           <article id="sensors" class="card sensor-panel view"><div class="card-title"><h2>传感器仪表盘</h2><span id="sensor-meta" class="muted">等待上报</span></div><div class="sensor-body"><div id="sensor-metrics" class="metric-grid"></div><div class="info-box"><span>状态说明</span><strong>温湿度、距离、电位器、NTC、编码器会随 STM32 上报自动刷新。</strong><span class="data-note">如果某项显示“未上报”，说明该传感器还没有新数据进入后端。</span></div></div></article>
-          <article id="hardware-page" class="card hardware-page view"><div class="view-title"><h2>硬件控制</h2><p>点击按钮直接下发动作到真实执行链路；页面会在日志里记录操作和 ACK 状态。</p></div><div id="hardware" class="hardware-card"><div class="mini-title"><span>执行器控制台</span><span id="hardware-meta" class="muted">直连动作接口</span></div><div class="hardware-grid"><button class="tool-card" data-tool="fan_on" type="button"><span class="tool-icon">风</span><span>风扇开启</span><small>action</small></button><button class="tool-card" data-tool="fan_off" type="button"><span class="tool-icon">停</span><span>风扇关闭</span><small>action</small></button><button class="tool-card" data-tool="beep" type="button"><span class="tool-icon">声</span><span>蜂鸣提醒</span><small>action</small></button><button class="tool-card warn" data-tool="lock" type="button"><span class="tool-icon">锁</span><span>锁定</span><small>action</small></button><button class="tool-card" data-tool="unlock" type="button"><span class="tool-icon">开</span><span>解锁</span><small>action</small></button></div></div><div class="info-box"><span>操作提示</span><strong>连接 WS 后触发动作，ACK 状态会同步显示在日志和诊断页。</strong><span class="data-note">控制口令只在本次打开页面期间有效；未输入时需要刷已注册卡进入上下文。</span></div></article>
+          <article id="hardware-page" class="card hardware-page view"><div class="view-title"><h2>硬件控制</h2><p>点击按钮直接下发动作到真实执行链路；页面会在日志里记录操作和 ACK 状态。</p></div><div id="hardware" class="hardware-card"><div class="mini-title"><span>执行器控制台</span><span id="hardware-meta" class="muted">直连动作接口</span></div><div class="hardware-grid"><button class="tool-card" data-tool="fan_on" type="button"><span class="tool-icon">风</span><span>风扇开启</span><small>action</small></button><button class="tool-card" data-tool="fan_off" type="button"><span class="tool-icon">停</span><span>风扇关闭</span><small>action</small></button><button class="tool-card" data-tool="beep" type="button"><span class="tool-icon">声</span><span>蜂鸣提醒</span><small>action</small></button><button class="tool-card warn" data-tool="lock" type="button"><span class="tool-icon">锁</span><span>锁定</span><small>action</small></button><button class="tool-card" data-tool="unlock" type="button"><span class="tool-icon">开</span><span>解锁</span><small>action</small></button></div></div><div class="info-box"><span>操作提示</span><strong>连接 WS 后触发动作，ACK 状态会同步显示在日志和诊断页。</strong><span class="data-note">管理员密码验证成功后仅在本次打开页面期间有效；未验证时需要刷已注册卡进入上下文。</span></div></article>
         </section>
         <section id="bottom-pages" class="bottom-grid hidden-group">
           <article id="rfid" class="bottom-card view"><div class="mini-title"><span>RFID 读取</span><span id="rfid-status-pill" class="tiny-pill warn">暂无记录</span></div><div id="rfid-current" class="info-box"></div><form id="rfid-form" class="form-stack"><input id="rfid-user-id" placeholder="已有 user_id（可选）" autocomplete="off"><input id="rfid-name" placeholder="用户名（新用户必填）" autocomplete="off"><input id="rfid-summary" placeholder="上下文摘要（可选）" autocomplete="off"><input id="rfid-notes" placeholder="管理备注（可选）" autocomplete="off"><select id="rfid-mode"><option value="study">study</option><option value="rest">rest</option><option value="admin">admin</option></select><input id="rfid-uid" placeholder="手动 UID 备选，例如 04A1B2C3" autocomplete="off"><div class="button-row"><button class="light-btn" id="rfid-enroll" type="submit">等待实体刷卡注册</button><button class="light-btn" id="rfid-manual-register" type="button">手动绑定 UID</button><button class="light-btn" id="rfid-scan" type="button">模拟刷卡</button></div></form></article>
@@ -1620,12 +1620,32 @@
     const shortId = (v) => v ? (String(v).length > 14 ? `${String(v).slice(0, 14)}...` : String(v)) : "-";
     const normalizeUid = (value) => String(value || "").trim().toUpperCase().replace(/[\s:-]+/g, "");
     let pageControlToken = "";
+    let administratorPasswordVerified = false;
+    let administratorPasswordTimer = null;
     try { localStorage.removeItem("controlToken"); } catch (err) {}
     const controlToken = () => pageControlToken;
     const authHeaders = () => controlToken() ? {"X-Demo-Token": controlToken()} : {};
     const hasPhysicalUserContext = () => Boolean(lastState && lastState.current_user && lastState.active_session_id && (lastState.sensors || {}).active_context_physical_card === true);
-    const ensureAccessContext = () => { if (controlToken() || hasPhysicalUserContext()) return true; local("先刷已注册 RFID 卡或输入本次控制口令"); showView("rfid"); return false; };
+    const ensureAccessContext = () => { if (administratorPasswordVerified || hasPhysicalUserContext()) return true; local("先刷已注册 RFID 卡或输入正确的管理员密码"); return false; };
     const api = (path, options = {}) => fetch(path, {headers: {"Content-Type": "application/json", ...authHeaders(), ...(options.headers || {})}, ...options}).then(async (res) => { const data = await res.json(); if (!res.ok) throw new Error(data.detail || res.statusText); return data; });
+    const setAdministratorPasswordStatus = (message, ok = null) => { text("admin-password-status", message); const node = $("admin-password-status"); if (node) node.style.color = ok === true ? "#15803d" : (ok === false ? "#dc2626" : ""); };
+    const verifyAdministratorPassword = async () => {
+      if (administratorPasswordTimer) clearTimeout(administratorPasswordTimer);
+      administratorPasswordTimer = null;
+      pageControlToken = $("control-token").value.trim();
+      administratorPasswordVerified = false;
+      if (!pageControlToken) { setAdministratorPasswordStatus("未输入"); local("管理员密码已清空"); return; }
+      setAdministratorPasswordStatus("验证中…");
+      try {
+        await api("/api/auth/verify", {method:"POST"});
+        administratorPasswordVerified = true;
+        setAdministratorPasswordStatus("正确", true);
+        local("管理员密码正确，可以使用对话与控制功能");
+      } catch (err) {
+        setAdministratorPasswordStatus("错误", false);
+        local("管理员密码错误，请重新输入");
+      }
+    };
     const push = (key, value) => { if (!Number.isFinite(Number(value))) return; history[key].push(Number(value)); if (history[key].length > MAX_POINTS) history[key].shift(); };
     const WORK_VIEWS = new Set(["chat", "loop", "sensors", "hardware-page"]);
     const BOTTOM_VIEWS = new Set(["rfid", "asr", "history", "diagnostics-card"]);
@@ -1781,8 +1801,15 @@
     $("phone-rfid-focus").addEventListener("click", () => showView("rfid"));
     $("voice-toggle").addEventListener("click", () => { const rec = speech(); if (!rec) return local("当前浏览器不支持 Web Speech API，请使用 ASR 上传"); if (voiceActive) rec.stop(); else rec.start(); });
     $("control-token").value = "";
-    $("control-token").addEventListener("input", () => { pageControlToken = $("control-token").value.trim(); });
-    $("control-token").addEventListener("change", () => { pageControlToken = $("control-token").value.trim(); local(pageControlToken ? "控制口令本次页面有效" : "控制口令已清空"); });
+    $("control-token").addEventListener("input", () => {
+      pageControlToken = $("control-token").value.trim();
+      administratorPasswordVerified = false;
+      setAdministratorPasswordStatus(pageControlToken ? "待验证" : "未输入");
+      if (administratorPasswordTimer) clearTimeout(administratorPasswordTimer);
+      administratorPasswordTimer = pageControlToken ? setTimeout(() => verifyAdministratorPassword().catch((err) => local(err.message)), 600) : null;
+    });
+    $("control-token").addEventListener("change", () => verifyAdministratorPassword().catch((err) => local(err.message)));
+    $("control-token").addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); verifyAdministratorPassword().catch((err) => local(err.message)); } });
     setInterval(clock, 1000); setInterval(() => refresh().catch((err) => local(err.message)), 30000); clock(); renderLogs(); showView((location.hash || "#home").slice(1) || "home"); refresh().catch((err) => local(err.message));
   </script>
 </body>

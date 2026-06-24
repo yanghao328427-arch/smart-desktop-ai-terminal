@@ -266,7 +266,7 @@ Page({
     currentTitle: VIEW_TITLES.home,
     controlTokenDraft: "",
     tokenSaved: false,
-    tokenSavedText: "本次未输入"
+    tokenSavedText: "未验证"
   },
 
   onLoad() {
@@ -339,7 +339,7 @@ Page({
 
   ensureControlToken() {
     if (this.data.controlToken) return true;
-    this.toast("先在安全设置输入本次控制口令");
+    this.toast("先在安全设置验证管理员密码");
     this.setData({
       currentView: "security",
       currentTitle: VIEW_TITLES.security
@@ -355,7 +355,7 @@ Page({
 
   ensureAccessContext() {
     if (this.data.controlToken || this.hasActiveUserContext()) return true;
-    this.toast("先刷已注册 RFID 卡或输入本次控制口令");
+    this.toast("先刷已注册 RFID 卡或验证管理员密码");
     this.setData({
       currentView: "rfid",
       currentTitle: VIEW_TITLES.rfid
@@ -396,17 +396,47 @@ Page({
     this.setData({ controlTokenDraft: event.detail.value.trim() });
   },
 
-  saveControlToken() {
+  async saveControlToken() {
     const controlToken = String(this.data.controlTokenDraft || "").trim();
+    if (!controlToken) {
+      this.toast("管理员密码不能为空");
+      return;
+    }
+    try {
+      await new Promise((resolve, reject) => {
+        wx.request({
+          url: `${normalizeApiBase(this.data.apiBase)}/api/auth/verify`,
+          method: "POST",
+          header: {
+            "content-type": "application/json",
+            "X-Demo-Token": controlToken
+          },
+          success: (res) => {
+            if (res.statusCode >= 200 && res.statusCode < 300) resolve(res.data);
+            else reject(new Error("管理员密码错误"));
+          },
+          fail: reject
+        });
+      });
+    } catch (error) {
+      this.setData({
+        controlToken: "",
+        tokenSaved: false,
+        tokenSavedText: "密码错误"
+      });
+      app.globalData.controlToken = "";
+      this.toast("管理员密码错误");
+      return;
+    }
     this.setData({
       controlToken,
       controlTokenDraft: "",
-      tokenSaved: Boolean(controlToken),
-      tokenSavedText: controlToken ? "本次有效" : "本次未输入"
+      tokenSaved: true,
+      tokenSavedText: "密码正确"
     });
     wx.removeStorageSync("controlToken");
     app.globalData.controlToken = controlToken;
-    this.toast(controlToken ? "控制口令本次有效" : "控制口令为空");
+    this.toast("管理员密码正确");
   },
 
   clearControlToken() {
@@ -414,11 +444,11 @@ Page({
       controlToken: "",
       controlTokenDraft: "",
       tokenSaved: false,
-      tokenSavedText: "本次未输入"
+      tokenSavedText: "未验证"
     });
     wx.removeStorageSync("controlToken");
     app.globalData.controlToken = "";
-    this.toast("已清除本次口令");
+    this.toast("已清除管理员密码");
   },
   onChatInput(event) {
     this.setData({ chatText: event.detail.value });
