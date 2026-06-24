@@ -134,6 +134,8 @@ BT:LOCK:OFF
 
 按钮语义：`KEY1/PB12` 在 OLED 主状态和信息副屏之间切换，长按回主屏；`KEY2/PB13` 按下即打断当前播报，超过约 600ms 后进入电脑麦克风 PTT 录音，松开立即上传。
 
+收到 `NET:UI:USER:<user_id>:<uid>:<mode>` 后，STM32 会自动切换到 `USER CONTEXT` 副屏，显示 `ID`、`CARD` 和 `MODE`；仍可使用 KEY1 切换其它页面。
+
 调试时仍允许直接发：
 
 ```text

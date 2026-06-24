@@ -2340,6 +2340,8 @@ bool handleUserContextCommand(const String &payload) {
       currentCardUid = "-";
     }
   }
+  infoScreen = INFO_SCREEN_USER;
+  infoOverlayUntilMs = millis() + SCREEN_OVERLAY_MS;
   uiEvent.detail = String("USER ") + compactForDisplay(currentUserId, 14);
   oledRenderPending = true;
   return true;
@@ -2384,6 +2386,12 @@ bool executeNetCommand(const String &command) {
     line += String(oledFps);
     line += ",volume_pct=";
     line += String(speechVolumePercent);
+    line += ",user_id=";
+    line += currentUserId;
+    line += ",card_uid=";
+    line += currentCardUid;
+    line += ",user_mode=";
+    line += currentUserMode;
     writeBack(line);
     return true;
   }
