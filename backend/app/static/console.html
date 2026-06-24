@@ -1612,7 +1612,7 @@
           </div>
           <div class="self-check-panel">
             <div class="self-check-layer"><span>第一层 · 被动自检</span><strong id="passive-check-title">等待数据</strong><span id="passive-check-detail">检查在线状态、遥测新鲜度和六类传感器</span></div>
-            <div class="self-check-layer"><span>第二层 · 主动自检</span><strong id="active-check-title">尚未执行</strong><span id="active-check-detail">只读查询 STM32，并验证新遥测与 ACK</span></div>
+            <div class="self-check-layer"><span>第二层 · 主动自检</span><strong id="active-check-title">尚未执行</strong><span id="active-check-detail">只读探测 STM32，并验证新遥测与 ACK</span></div>
             <button id="run-self-check" class="self-check-action" type="button">执行双重自检</button>
           </div>
         </section>
@@ -1646,7 +1646,7 @@
     let currentDialogue = [], localEvents = [];
     let lastHealth = null, lastState = null, lastDiag = null;
     let selfCheckRunning = false;
-    let activeSelfCheck = {status:"idle", title:"尚未执行", detail:"只读查询 STM32，并验证新遥测与 ACK"};
+    let activeSelfCheck = {status:"idle", title:"尚未执行", detail:"只读探测 STM32，并验证新遥测与 ACK"};
     const $ = (id) => document.getElementById(id);
     const $$ = (selector) => Array.from(document.querySelectorAll(selector));
     const has = (v) => v !== undefined && v !== null && v !== "";
@@ -1869,11 +1869,11 @@
       if (selfCheckRunning) return;
       if (!administratorPasswordVerified) { local("主动自检需要先输入正确的管理员密码"); return; }
       selfCheckRunning = true;
-      activeSelfCheck = {status:"running", title:"执行中", detail:"正在请求 STM32 立即返回遥测并等待 ACK"};
+      activeSelfCheck = {status:"running", title:"执行中", detail:"正在探测 STM32 UART，并等待下一帧真实遥测"};
       renderSelfCheck(lastState || {});
       const beforeTelemetry = new Date((lastState?.sensors || {}).last_telemetry_at || 0).getTime();
       try {
-        const data = await api("/api/hardware/action", {method:"POST", body:JSON.stringify({device_id:deviceId, type:"telemetry_request", payload:{}, mark_sent:true, source:"web_self_check"})});
+        const data = await api("/api/hardware/action", {method:"POST", body:JSON.stringify({device_id:deviceId, type:"self_check_probe", payload:{}, mark_sent:true, source:"web_self_check"})});
         const actionId = data.actions?.[0]?.id;
         if (!actionId) throw new Error("自检动作未生成");
         const deadline = Date.now() + 15000;

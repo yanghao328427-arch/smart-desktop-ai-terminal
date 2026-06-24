@@ -763,16 +763,16 @@ def test_hardware_action_queues_ui_state_for_polling_when_no_session():
     assert queued["commands"] == data["commands"]
 
 
-def test_hardware_action_queues_read_only_telemetry_self_check():
+def test_hardware_action_queues_read_only_uart_self_check():
     client = make_client()
 
     response = client.post(
         "/api/hardware/action",
-        json={"type": "telemetry_request", "payload": {}, "source": "web_self_check"},
+        json={"type": "self_check_probe", "payload": {}, "source": "web_self_check"},
     )
 
     assert response.status_code == 200
-    assert response.json()["commands"][0].endswith(":NET:TELEMETRY?")
+    assert response.json()["commands"][0].endswith(":NET:UART?")
 
 
 def test_manual_lock_priority_blocks_lower_priority_ai_unlock():

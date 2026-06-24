@@ -217,6 +217,8 @@ def command_from_action(action: ActionSpec) -> str:
         return f"NET:AI:{state}"
     if action_type == "telemetry_request":
         return "NET:TELEMETRY?"
+    if action_type == "self_check_probe":
+        return "NET:UART?"
 
     raise ValueError(f"unsupported action type: {action_type}")
 

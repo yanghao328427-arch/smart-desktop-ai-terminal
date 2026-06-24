@@ -66,6 +66,10 @@ def test_telemetry_request_action_is_read_only():
     assert command_from_action(ActionSpec(type="telemetry_request", payload={})) == "NET:TELEMETRY?"
 
 
+def test_self_check_probe_uses_compatible_uart_ping():
+    assert command_from_action(ActionSpec(type="self_check_probe", payload={})) == "NET:UART?"
+
+
 def test_user_context_action_uses_protocol_safe_fields():
     command = command_from_action(
         ActionSpec(
