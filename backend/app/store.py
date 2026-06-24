@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Any
 from uuid import uuid4
 
-from .actions import command_from_action, parse_ack_line, wrap_command
+from .actions import command_from_action, parse_ack_line, split_tts_text, tts_playback_seconds, wrap_command
 from .context_db import ContextDatabase, EnrollmentRecord
 from .schemas import (
     ActionRecord,
@@ -30,7 +30,14 @@ def normalize_uid(uid: str) -> str:
 
 
 def uart_safe_action_order(specs: list[ActionSpec]) -> list[ActionSpec]:
-    return [spec for spec in specs if spec.type != "tts_speak"] + [spec for spec in specs if spec.type == "tts_speak"]
+    expanded: list[ActionSpec] = []
+    for spec in specs:
+        if spec.type != "tts_speak":
+            expanded.append(spec)
+            continue
+        for text in split_tts_text(spec.payload.get("text")):
+            expanded.append(ActionSpec(type="tts_speak", payload={**spec.payload, "text": text}))
+    return [spec for spec in expanded if spec.type != "tts_speak"] + [spec for spec in expanded if spec.type == "tts_speak"]
 
 
 DEVICE_ONLINE_TTL_SECONDS = 30
@@ -58,6 +65,7 @@ class RuntimeStore:
         self.default_edge_id = default_edge_id
         self._devices: dict[str, DeviceSnapshot] = {}
         self._actions: dict[str, list[ActionRecord]] = {}
+        self._tts_ready_at: dict[str, datetime] = {}
         self._rfid_registry_path = Path(rfid_registry_path) if rfid_registry_path else None
         self.context_db = ContextDatabase(context_db_path or Path(__file__).resolve().parents[1] / "data" / "context.sqlite3")
         self._lock = RLock()
@@ -399,6 +407,15 @@ class RuntimeStore:
             device.sensors["last_button_event"] = event
             device.sensors["last_button_source"] = (source or "stm32")[:40]
             device.sensors["last_button_at"] = stamp.isoformat()
+            recent_events = list(device.sensors.get("recent_button_events") or [])
+            recent_events.append(
+                {
+                    "seq": seq,
+                    "line": clean_line,
+                    "at": stamp.isoformat(),
+                }
+            )
+            device.sensors["recent_button_events"] = recent_events[-12:]
             if duration_ms is not None:
                 device.sensors["last_button_duration_ms"] = duration_ms
 
@@ -429,11 +446,12 @@ class RuntimeStore:
             device.sensors["last_interrupt_at"] = stamp.isoformat()
             device.voice_state = "interrupted"
             device.state = DeviceRunState.listen
+            self._tts_ready_at.pop(device.device_id, None)
             for action in self._actions.get(device.device_id, []):
-                if action.status == ActionStatus.queued and action.type == "tts_speak":
+                if action.status in {ActionStatus.queued, ActionStatus.sent} and action.type == "tts_speak":
                     action.status = ActionStatus.failed
                     action.acked_at = stamp
-                    action.error = "interrupted before send"
+                    action.error = "interrupted before speech completion"
             self._refresh_counts(device.device_id)
             return device
 
@@ -468,11 +486,25 @@ class RuntimeStore:
             self._refresh_counts(device.device_id)
             return records
 
-    def pending_commands(self, device_id: str | None, *, mark_sent: bool) -> list[ActionRecord]:
+    def pending_commands(self, device_id: str | None, *, mark_sent: bool, mark_seen: bool = True) -> list[ActionRecord]:
         with self._lock:
             device = self.ensure_device(device_id)
-            self._mark_device_seen(device)
-            actions = [action for action in self._actions[device.device_id] if action.status == ActionStatus.queued]
+            if mark_seen:
+                self._mark_device_seen(device)
+            tts_ready_at = self._tts_ready_at.get(device.device_id)
+            waiting_for_speech_ack = bool(tts_ready_at and now_utc() < tts_ready_at) or any(
+                action.type == "tts_speak" and action.status == ActionStatus.sent
+                for action in self._actions[device.device_id]
+            )
+            actions: list[ActionRecord] = []
+            for action in self._actions[device.device_id]:
+                if action.status != ActionStatus.queued:
+                    continue
+                if action.type == "tts_speak":
+                    if waiting_for_speech_ack:
+                        continue
+                    waiting_for_speech_ack = True
+                actions.append(action)
             if mark_sent:
                 self.mark_actions_sent([action.id for action in actions])
             self._refresh_counts(device.device_id)
@@ -515,12 +547,24 @@ class RuntimeStore:
             }
             if ok:
                 device.ack_ok_count += 1
+                if action.type == "tts_speak":
+                    self._tts_ready_at[device.device_id] = action.acked_at + timedelta(
+                        seconds=tts_playback_seconds(action.payload.get("text"))
+                    )
             else:
                 device.ack_err_count += 1
                 device.state = DeviceRunState.error
             device.last_seen = action.acked_at
             self._refresh_counts(device.device_id)
             return action, device, ok
+
+    def tts_release_delay_seconds(self, device_id: str | None) -> float:
+        with self._lock:
+            device = self.ensure_device(device_id)
+            ready_at = self._tts_ready_at.get(device.device_id)
+            if ready_at is None:
+                return 0.0
+            return max(0.0, (ready_at - now_utc()).total_seconds())
 
     def diagnostics(self, device_id: str | None) -> tuple[DeviceSnapshot, list[ActionRecord], list[ActionRecord], list[ActionRecord]]:
         with self._lock:

@@ -1538,6 +1538,7 @@
     .button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .info-box.compact { min-height: 104px; }
     .metric strong.is-missing, .phone-metric strong.is-missing { color: var(--subtle); font-size: 13px; font-weight: 700; }
+    .metric .live-note { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; font-weight: 700; }
     .step-pending .round-icon, .step-pending .phone-step-icon { color: #667085; background: #eef2f6; box-shadow: none; }
     .step-error .round-icon, .step-error .phone-step-icon { color: #b42318; background: #fff1f0; box-shadow: none; }
     .diag-value { color: #1d2939; font-weight: 800; }
@@ -1572,6 +1573,7 @@
             <button class="nav-item" data-view="sensors" type="button"><span class="nav-icon">◇</span><span>传感器</span></button>
             <button class="nav-item" data-view="loop" type="button"><span class="nav-icon">↔</span><span>闭环链路</span></button>
             <button class="nav-item" data-view="rfid" type="button"><span class="nav-icon">▣</span><span>RFID</span></button>
+            <button class="nav-item" data-view="users" type="button"><span class="nav-icon">♙</span><span>用户账号</span></button>
             <button class="nav-item" data-view="asr" type="button"><span class="nav-icon">♬</span><span>ASR 上传</span></button>
             <button class="nav-item" data-view="history" type="button"><span class="nav-icon">≡</span><span>历史日志</span></button>
             <button class="nav-item" data-view="diagnostics-card" type="button"><span class="nav-icon">⚙</span><span>后台日志</span></button>
@@ -1599,6 +1601,7 @@
             <button class="feature-card green" data-view="hardware-page" type="button"><div><span class="feature-icon">控</span><strong>硬件控制</strong></div><span>一键控制风扇、蜂鸣器、门锁等执行器。</span></button>
             <button class="feature-card" data-view="sensors" type="button"><div><span class="feature-icon">感</span><strong>传感器数据</strong></div><span>展示温湿度、距离、电位器、编码器等实时上报。</span></button>
             <button class="feature-card green" data-view="rfid" type="button"><div><span class="feature-icon">卡</span><strong>RFID 刷卡</strong></div><span>注册卡片、模拟 UID、查看授权通过或拒绝。</span></button>
+            <button class="feature-card" data-view="users" type="button"><div><span class="feature-icon">人</span><strong>用户账号</strong></div><span>查看当前刷卡账号；验证管理员密码后查看全部已注册账号。</span></button>
             <button class="feature-card purple" data-view="history" type="button"><div><span class="feature-icon">史</span><strong>历史日志</strong></div><span>集中查看对话、刷卡、ASR、硬件 ACK 与本地操作记录。</span></button>
           </div>
         </section>
@@ -1627,6 +1630,7 @@
           <article id="hardware-page" class="card hardware-page view"><div class="view-title"><h2>硬件控制</h2><p>点击按钮直接下发动作到真实执行链路；页面会在日志里记录操作和 ACK 状态。</p></div><div id="hardware" class="hardware-card"><div class="mini-title"><span>执行器控制台</span><span id="hardware-meta" class="muted">直连动作接口</span></div><div class="hardware-grid"><button class="tool-card" data-tool="fan_on" type="button"><span class="tool-icon">风</span><span>风扇开启</span><small>action</small></button><button class="tool-card" data-tool="fan_off" type="button"><span class="tool-icon">停</span><span>风扇关闭</span><small>action</small></button><button class="tool-card" data-tool="beep" type="button"><span class="tool-icon">声</span><span>蜂鸣提醒</span><small>action</small></button><button class="tool-card warn" data-tool="lock" type="button"><span class="tool-icon">锁</span><span>锁定</span><small>action</small></button><button class="tool-card" data-tool="unlock" type="button"><span class="tool-icon">开</span><span>解锁</span><small>action</small></button></div></div><div class="info-box"><span>操作提示</span><strong>连接 WS 后触发动作，ACK 状态会同步显示在日志和诊断页。</strong><span class="data-note">管理员密码验证成功后仅在本次打开页面期间有效；未验证时需要刷已注册卡进入上下文。</span></div></article>
         </section>
         <section id="bottom-pages" class="bottom-grid hidden-group">
+          <article id="users" class="bottom-card view"><div class="mini-title"><span>用户账号</span><span id="users-status" class="muted">等待刷卡或管理员验证</span></div><div class="mini-title" style="margin-top:12px"><span>当前账号</span><span class="muted">来自硬件 RFID 刷卡</span></div><div id="current-user-info" class="info-box compact"></div><div class="mini-title" style="margin-top:16px"><span>已注册账号</span><span id="registered-user-count" class="muted">管理员验证后显示</span></div><div id="registered-user-list" class="action-list"><div class="empty-state">输入正确的管理员密码后，即可查看已注册账号总列表。</div></div></article>
           <article id="rfid" class="bottom-card view"><div class="mini-title"><span>RFID 读取</span><span id="rfid-status-pill" class="tiny-pill warn">暂无记录</span></div><div id="rfid-current" class="info-box"></div><form id="rfid-form" class="form-stack"><input id="rfid-user-id" placeholder="已有 user_id（可选）" autocomplete="off"><input id="rfid-name" placeholder="用户名（新用户必填）" autocomplete="off"><input id="rfid-summary" placeholder="上下文摘要（可选）" autocomplete="off"><input id="rfid-notes" placeholder="管理备注（可选）" autocomplete="off"><select id="rfid-mode"><option value="study">study</option><option value="rest">rest</option><option value="admin">admin</option></select><input id="rfid-uid" placeholder="手动 UID 备选，例如 04A1B2C3" autocomplete="off"><div class="button-row"><button class="light-btn" id="rfid-enroll" type="submit">等待实体刷卡注册</button><button class="light-btn" id="rfid-manual-register" type="button">手动绑定 UID</button><button class="light-btn" id="rfid-scan" type="button">模拟刷卡</button></div></form></article>
           <article id="asr" class="bottom-card view"><div class="mini-title"><span>ASR 语音上传</span><span id="asr-status-pill" class="tiny-pill warn">暂无记录</span></div><div id="asr-current" class="info-box"></div><form id="asr-form" class="form-stack"><input id="asr-file" type="file" accept="audio/*"><button class="light-btn" type="submit">上传录音文件</button></form></article>
           <article id="history" class="bottom-card view"><div class="mini-title"><span>历史日志</span><span class="muted">对话 / RFID / ASR / ACK / 本地操作</span></div><div id="history-summary" class="history-summary"></div><div id="history-stream" class="history-stream"></div><div class="mini-title" style="margin-top:12px"><span>最近动作</span><span class="muted">来自诊断接口</span></div><div id="action-list" class="action-list"></div></article>
@@ -1640,7 +1644,7 @@
     const deviceId = "desktop-agent-001";
     const EMPTY = "未上报", NONE = "暂无记录", NO_STATS = "暂无统计";
     const MAX_POINTS = 18;
-    const history = {refreshMs: [], temp: [], ackMs: [], sensors: []};
+    const history = {refreshMs: [], temp: [], humidity: [], distance: [], pot: [], ntc: [], encoder: [], ackMs: [], sensors: []};
     let ws = null, recognition = null, voiceActive = false, refreshInFlight = false;
     let activeEnrollId = null, enrollTimer = null;
     let currentDialogue = [], localEvents = [];
@@ -1682,6 +1686,7 @@
         administratorPasswordVerified = true;
         setAdministratorPasswordStatus("正确", true);
         local("管理员密码正确，可以使用对话与控制功能");
+        await refresh();
       } catch (err) {
         setAdministratorPasswordStatus("错误", false);
         local("管理员密码错误，请重新输入");
@@ -1689,7 +1694,7 @@
     };
     const push = (key, value) => { if (!Number.isFinite(Number(value))) return; history[key].push(Number(value)); if (history[key].length > MAX_POINTS) history[key].shift(); };
     const WORK_VIEWS = new Set(["chat", "loop", "sensors", "hardware-page"]);
-    const BOTTOM_VIEWS = new Set(["rfid", "asr", "history", "diagnostics-card"]);
+    const BOTTOM_VIEWS = new Set(["users", "rfid", "asr", "history", "diagnostics-card"]);
     const showView = (target = "home") => {
       const view = $(target) || $("home");
       if (!view) return;
@@ -1708,14 +1713,14 @@
     const sensorsOf = (s = {}) => {
       const items = [
         {label:"AHT20 状态", present:has(s.aht20_ok), healthy:s.aht20_ok === true, value:s.aht20_ok === true ? "正常" : (s.aht20_ok === false ? "异常" : EMPTY), tone:"green"},
-        {label:"温度", present:s.aht20_ok === true && has(s.temperature_c), healthy:s.aht20_ok === true && has(s.temperature_c), value:s.aht20_ok === true ? sensorValue(s.temperature_c, " C") : EMPTY, tone:"green"},
-        {label:"湿度", present:s.aht20_ok === true && has(s.humidity_pct), healthy:s.aht20_ok === true && has(s.humidity_pct), value:s.aht20_ok === true ? sensorValue(s.humidity_pct, " %") : EMPTY, tone:"blue"},
+        {label:"温度", present:s.aht20_ok === true && has(s.temperature_c), healthy:s.aht20_ok === true && has(s.temperature_c), value:s.aht20_ok === true ? sensorValue(s.temperature_c, " C") : EMPTY, tone:"green", historyKey:"temp"},
+        {label:"湿度", present:s.aht20_ok === true && has(s.humidity_pct), healthy:s.aht20_ok === true && has(s.humidity_pct), value:s.aht20_ok === true ? sensorValue(s.humidity_pct, " %") : EMPTY, tone:"blue", historyKey:"humidity"},
         {label:"超声波状态", present:has(s.distance_ok), healthy:s.distance_enabled !== false && s.distance_ok === true, value:!has(s.distance_ok) ? EMPTY : (s.distance_enabled === false ? "未启用" : (s.distance_ok === true ? "正常" : "异常")), tone:"green"},
-        {label:"距离", present:s.distance_ok === true && has(s.distance_cm), healthy:s.distance_ok === true && has(s.distance_cm), value:s.distance_enabled === false ? "未启用" : (s.distance_ok === true ? sensorValue(s.distance_cm, " cm") : EMPTY), tone:"green"},
-        {label:"电位器", present:has(s.pot_raw), value:has(s.pot_raw) ? `${s.pot_raw}${has(s.pot_pct) ? ` / ${s.pot_pct}%` : ""}` : EMPTY, tone:"blue"},
-        {label:"NTC", present:has(s.ntc_raw), value:has(s.ntc_raw) ? `${s.ntc_raw}${has(s.ntc_pct) ? ` / ${s.ntc_pct}%` : ""}` : EMPTY, tone:"orange"},
+        {label:"距离", present:s.distance_ok === true && has(s.distance_cm), healthy:s.distance_ok === true && has(s.distance_cm), value:s.distance_enabled === false ? "未启用" : (s.distance_ok === true ? sensorValue(s.distance_cm, " cm") : EMPTY), tone:"green", historyKey:"distance"},
+        {label:"电位器", present:has(s.pot_raw), value:has(s.pot_raw) ? `${s.pot_raw}${has(s.pot_pct) ? ` / ${s.pot_pct}%` : ""}` : EMPTY, tone:"blue", historyKey:"pot"},
+        {label:"NTC", present:has(s.ntc_raw), value:has(s.ntc_raw) ? `${s.ntc_raw}${has(s.ntc_pct) ? ` / ${s.ntc_pct}%` : ""}` : EMPTY, tone:"orange", historyKey:"ntc"},
         {label:"循迹传感器", present:has(s.tracking_signal), value:has(s.tracking_signal) ? (s.tracking_signal ? "高电平" : "低电平") : EMPTY, tone:"blue"},
-        {label:"编码器", present:has(s.encoder_position), value:has(s.encoder_position) ? `${s.encoder_position} (${Number(s.encoder_delta || 0) >= 0 ? "+" : ""}${s.encoder_delta || 0})` : EMPTY, tone:"blue"},
+        {label:"编码器", present:has(s.encoder_position), value:has(s.encoder_position) ? `${s.encoder_position} (${Number(s.encoder_delta || 0) >= 0 ? "+" : ""}${s.encoder_delta || 0})` : EMPTY, tone:"blue", historyKey:"encoder"},
         {label:"编码器按键", present:has(s.encoder_button), value:has(s.encoder_button) ? (s.encoder_button ? "按下" : "松开") : EMPTY, tone:"blue"},
         {label:"环境判断", present:has(s.env_state), value:s.env_state || EMPTY, tone:"green"},
         {label:"RGB 判断", present:has(s.rgb_status), value:has(s.rgb_status) ? `${s.rgb_status}${has(s.rgb_reason) ? ` / ${s.rgb_reason}` : ""}` : EMPTY, tone:"orange"},
@@ -1789,7 +1794,15 @@
     };
     const renderProof = (health, state, diag, refreshMs) => {
       const s = state.sensors || {}, info = sensorsOf(s), total = (state.ack_ok_count || 0) + (state.ack_err_count || 0), ms = ackLatency(diag);
-      push("refreshMs", refreshMs); if (s.aht20_ok === true && has(s.temperature_c)) push("temp", s.temperature_c); if (ms !== null) push("ackMs", ms); push("sensors", info.count);
+      push("refreshMs", refreshMs);
+      if (s.aht20_ok === true && has(s.temperature_c)) push("temp", s.temperature_c);
+      if (s.aht20_ok === true && has(s.humidity_pct)) push("humidity", s.humidity_pct);
+      if (s.distance_ok === true && has(s.distance_cm)) push("distance", s.distance_cm);
+      if (has(s.pot_raw)) push("pot", s.pot_raw);
+      if (has(s.ntc_raw)) push("ntc", s.ntc_raw);
+      if (has(s.encoder_position)) push("encoder", s.encoder_position);
+      if (ms !== null) push("ackMs", ms);
+      push("sensors", info.count);
       pill("proof-ai-status", health.cloud_ready === true ? "在线" : "未就绪", health.cloud_ready === true ? "ok" : "warn"); text("proof-ai-model", health.ai_model || (health.ai_provider || "未配置")); text("proof-ai-latency", `${Math.max(1, Math.round(refreshMs))} ms`);
       pill("proof-edge-status", state.online ? (state.session_connected ? "WS 在线" : "HTTP 上报在线") : "离线", state.online ? "ok" : "bad"); text("proof-wifi", has(s.wifi_rssi_dbm) ? `${s.wifi_rssi_dbm} dBm` : EMPTY); text("proof-edge-temp", s.aht20_ok === true ? sensorValue(s.temperature_c, " C") : EMPTY);
       pill("proof-ack-status", total ? ((state.ack_err_count || 0) ? "有错误" : "有 ACK") : "暂无 ACK", total ? ((state.ack_err_count || 0) ? "warn" : "ok") : "warn"); text("proof-ack-latency", ms === null ? NO_STATS : `${ms} ms`); text("proof-ack-rate", pct(state.ack_ok_count || 0, total));
@@ -1809,7 +1822,17 @@
       const button = $("run-self-check");
       if (button) { button.disabled = selfCheckRunning; button.textContent = selfCheckRunning ? "自检执行中…" : "执行双重自检"; }
     };
-    const renderSensors = (state) => { const info = sensorsOf(state.sensors || {}); text("sensor-meta", `已上报 ${info.count}/${info.total}`); text("phone-sensor-status", `已上报 ${info.count}/${info.total}`); $("sensor-metrics").innerHTML = info.items.map((item) => `<div class="metric"><span>${item.label}</span><strong>${item.value}</strong>${miniSpark(item.present && item.label === "温度" ? history.temp : [], item.tone)}</div>`).join(""); $("phone-metric-grid").innerHTML = info.items.map((item) => `<div class="phone-metric"><span>${item.label}</span><strong>${item.value}</strong></div>`).join(""); };
+    const renderSensors = (state) => {
+      const s = state.sensors || {}, info = sensorsOf(s), updatedAt = s.last_telemetry_at ? t(s.last_telemetry_at) : "等待上报";
+      const liveMeta = `已上报 ${info.count}/${info.total} · ${updatedAt}`;
+      const activity = (item) => item.historyKey && item.present && history[item.historyKey].length
+        ? miniSpark(history[item.historyKey], item.tone)
+        : `<span class="live-note">${item.present ? `实时更新 · ${updatedAt}` : "等待上报"}</span>`;
+      text("sensor-meta", liveMeta);
+      text("phone-sensor-status", liveMeta);
+      $("sensor-metrics").innerHTML = info.items.map((item) => `<div class="metric"><span>${item.label}</span><strong class="${item.present ? "" : "is-missing"}">${item.value}</strong>${activity(item)}</div>`).join("");
+      $("phone-metric-grid").innerHTML = info.items.map((item) => `<div class="phone-metric"><span>${item.label}</span><strong class="${item.present ? "" : "is-missing"}">${item.value}</strong></div>`).join("");
+    };
     const renderActions = (diag = {}) => { const actions = (diag.recent_actions || []).slice().reverse().slice(0, 6); const el = $("action-list"); if (!actions.length) { el.innerHTML = `<div class="action-row"><span class="dot"></span><span>暂无动作记录</span><span>--</span><span>${NO_STATS}</span></div>`; return; } el.innerHTML = actions.map((a) => `<div class="action-row"><span class="dot"></span><span>${a.type}</span><span>${actionTime(a)}</span><span class="${a.status === "failed" ? "bad-text" : "success-text"}">${statusText(a.status)}</span></div>`).join(""); };
     const renderHistory = (state = {}, diag = {}) => {
       const s = state.sensors || {};
@@ -1856,10 +1879,40 @@
       });
     };
     const renderRfid = (state) => { const s = state.sensors || {}, uid = s.last_rfid_uid, ok = s.last_rfid_authorized === true, user = state.current_user; pill("rfid-status-pill", uid ? (ok ? "已通过" : "已拒绝") : "暂无记录", uid ? (ok ? "ok" : "bad") : "warn"); $("rfid-current").innerHTML = `<span>最新 UID</span><strong>${uid || NONE}</strong><span class="tiny-pill ${uid ? (ok ? "ok" : "bad") : "warn"}">${uid ? (ok ? "授权通过" : "未授权") : "等待刷卡"}</span><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><span>时间</span><span>来源</span><strong style="font-size:14px">${t(s.last_rfid_at)}</strong><strong style="font-size:14px">${s.last_rfid_source || "暂无"}</strong><span>用户</span><span>上下文</span><strong style="font-size:14px">${user ? `${user.name}/${user.mode}` : "暂无"}</strong><strong style="font-size:14px">${user && user.profile_summary ? user.profile_summary : "未设置"}</strong></div>`; };
+    const renderUsers = (state = {}, users = null) => {
+      const current = state.current_user;
+      const currentBox = $("current-user-info");
+      if (currentBox) {
+        currentBox.replaceChildren();
+        const fields = current ? [["账号名称", current.name], ["用户 ID", current.user_id], ["RFID", current.uid || "未绑定"], ["当前模式", current.mode], ["刷卡状态", state.active_session_id ? "已进入当前账号" : "未进入"]] : [["当前账号", "暂无已刷卡登录账号"]];
+        fields.forEach(([label, value]) => { const labelNode = document.createElement("span"); const valueNode = document.createElement("strong"); labelNode.textContent = label; valueNode.textContent = value; valueNode.style.fontSize = "14px"; currentBox.append(labelNode, valueNode); });
+      }
+      const status = $("users-status"), count = $("registered-user-count"), list = $("registered-user-list");
+      if (!administratorPasswordVerified) {
+        if (status) status.textContent = current ? "已识别当前硬件账号" : "等待硬件刷卡";
+        if (count) count.textContent = "管理员验证后显示";
+        if (list) list.innerHTML = '<div class="empty-state">输入正确的管理员密码后，即可查看已注册账号总列表。</div>';
+        return;
+      }
+      const registered = Array.isArray(users) ? users : [];
+      if (status) status.textContent = "管理员已验证";
+      if (count) count.textContent = `共 ${registered.length} 个账号`;
+      if (!list) return;
+      list.replaceChildren();
+      if (!registered.length) { list.innerHTML = '<div class="empty-state">当前没有已注册账号。</div>'; return; }
+      registered.forEach((user) => {
+        const row = document.createElement("div"); row.className = "action-row";
+        const marker = document.createElement("span"); marker.className = "dot";
+        const name = document.createElement("span"); name.textContent = user.name || "未命名账号";
+        const id = document.createElement("span"); id.textContent = `${user.mode || "-"} · ${shortId(user.user_id)}`;
+        const uid = document.createElement("span"); uid.textContent = user.uid || "未绑定 RFID";
+        row.append(marker, name, id, uid); list.appendChild(row);
+      });
+    };
     const renderAsr = (state) => { const s = state.sensors || {}, hasAudio = has(s.last_audio_path) || has(s.last_audio_bytes) || has(s.last_asr_provider), ok = s.last_asr_ok === true; pill("asr-status-pill", hasAudio ? (ok ? "识别成功" : "识别失败") : "暂无记录", hasAudio ? (ok ? "ok" : "bad") : "warn"); $("asr-current").innerHTML = `<span>最新录音</span><strong style="font-size:14px">${filename(s.last_audio_path)}</strong><span class="tiny-pill ${hasAudio ? (ok ? "ok" : "bad") : "warn"}">${hasAudio ? (ok ? "已识别" : "失败") : "等待上传"}</span><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><span>时间</span><span>来源</span><strong style="font-size:14px">${t(s.last_asr_at)}</strong><strong style="font-size:14px">${s.last_asr_provider || "暂无"}</strong></div>`; };
     const renderDiag = (health, state, diag) => { const rows = [["云端 AI", health.cloud_ready === true ? (health.ai_model || "OK") : "未就绪"], ["设备链路", state.session_connected ? "WebSocket" : (state.online ? "HTTP 轮询" : "未连接")], ["UART", state.uart_ok ? "OK" : "未确认"], ["执行队列", `${state.pending_action_count || 0} 个待 ACK`], ["最近 ACK", state.last_ack ? `${state.last_ack.ok ? "OK" : "ERR"} ${shortId(state.last_ack.action_id)}` : "暂无"], ["最近上报", t(state.last_seen)]]; $("diagnostics-list").innerHTML = rows.map(([k, v]) => `<div class="diag-row"><span>${k}</span><strong>${v}</strong></div>`).join(""); text("diagnostics", JSON.stringify(diag, null, 2)); text("diagnostics-meta", `刷新 ${t(new Date())}`); };
-    const render = (health, state, diag, refreshMs) => { lastHealth = health; lastState = state; lastDiag = diag; currentDialogue = state.recent_dialogue || []; renderSystem(health, state, diag); renderProof(health, state, diag, refreshMs); renderSelfCheck(state); renderSensors(state); renderRfid(state); renderAsr(state); renderActions(diag); renderHistory(state, diag); renderDiag(health, state, diag); renderLogs(); };
-    const refresh = async () => { if (refreshInFlight) return; refreshInFlight = true; try { const started = performance.now(); const [health, state, diag] = await Promise.all([api("/api/health"), api(`/api/state/${deviceId}`), api(`/api/realtime/diagnostics/${deviceId}`)]); render(health, state, diag, performance.now() - started); } finally { refreshInFlight = false; } };
+    const render = (health, state, diag, refreshMs, users = null) => { lastHealth = health; lastState = state; lastDiag = diag; currentDialogue = state.recent_dialogue || []; renderSystem(health, state, diag); renderProof(health, state, diag, refreshMs); renderSelfCheck(state); renderSensors(state); renderRfid(state); renderUsers(state, users); renderAsr(state); renderActions(diag); renderHistory(state, diag); renderDiag(health, state, diag); renderLogs(); };
+    const refresh = async () => { if (refreshInFlight) return; refreshInFlight = true; try { const started = performance.now(); const usersRequest = administratorPasswordVerified ? api("/api/users") : Promise.resolve(null); const [health, state, diag, users] = await Promise.all([api("/api/health"), api(`/api/state/${deviceId}`), api(`/api/realtime/diagnostics/${deviceId}`), usersRequest]); render(health, state, diag, performance.now() - started, users ? users.users : null); } finally { refreshInFlight = false; } };
     const connectWs = () => { if (ws && ws.readyState === WebSocket.OPEN) return; const proto = location.protocol === "https:" ? "wss" : "ws"; ws = new WebSocket(`${proto}://${location.host}/api/realtime/ws?device_id=${deviceId}`); ws.onopen = () => { text("connect", "已连接"); text("hardware-meta", "WS 已连接"); }; ws.onclose = () => { text("connect", "已断开"); text("hardware-meta", "WS 已断开"); }; ws.onerror = () => text("connect", "连接失败"); ws.onmessage = (event) => { try { const data = JSON.parse(event.data); if (data.type === "assistant" && data.text) local(data.text, "assistant"); refresh().catch((err) => local(err.message)); } catch (err) { local(err.message); } }; };
     const sendChat = async (raw) => { if (!ensureAccessContext()) return; const clean = String(raw || "").trim(); if (!clean) return; local(clean, "user"); const data = await api("/api/chat", {method:"POST", body:JSON.stringify({device_id:deviceId, text:clean, source:"web_console"})}); local(data.reply, "assistant"); if (data.actions && data.actions.length) local(`已生成 ${data.actions.length} 条设备动作，等待 ACK。`, "assistant"); await refresh(); };
     const HW = {fan_on:{label:"打开风扇", type:"fan_control", payload:{state:"on", level:2}}, fan_off:{label:"关闭风扇", type:"fan_control", payload:{state:"off"}}, beep:{label:"蜂鸣提醒", type:"buzzer_alert", payload:{}}, lock:{label:"锁定", type:"lock_control", payload:{state:"on"}}, unlock:{label:"解锁", type:"lock_control", payload:{state:"off"}}};
@@ -1923,6 +1976,7 @@
     $("control-token").addEventListener("input", () => {
       pageControlToken = $("control-token").value.trim();
       administratorPasswordVerified = false;
+      if (lastState) renderUsers(lastState);
       setAdministratorPasswordStatus(pageControlToken ? "待验证" : "未输入");
       if (administratorPasswordTimer) clearTimeout(administratorPasswordTimer);
       administratorPasswordTimer = pageControlToken ? setTimeout(() => verifyAdministratorPassword().catch((err) => local(err.message)), 600) : null;

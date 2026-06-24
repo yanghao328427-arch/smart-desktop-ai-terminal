@@ -178,7 +178,7 @@ def test_tts_hex_command_limits_utf8_payload_bytes():
     command = command_from_action(ActionSpec(type="tts_speak", payload={"text": "智能对话" * 80}))
     hex_payload = command.removeprefix("NET:TTSHEX:")
 
-    assert len(bytes.fromhex(hex_payload)) <= 120
+    assert len(bytes.fromhex(hex_payload)) <= 90
 
 
 def test_cloud_reply_parser_prefers_structured_speech():
@@ -194,7 +194,7 @@ def test_speech_text_keeps_broadcast_sentence_short():
     speech = speech_text("当前设备在线。实时会话已连接。串口链路正常。温度 26.5 度，湿度 48.2%。距离数据暂时不可用。")
 
     assert speech.startswith("当前设备在线")
-    assert len(speech.encode("utf-8")) <= 90
+    assert len(speech.encode("utf-8")) <= 180
 
 
 def test_news_query_detection_and_rss_context_formatting():
@@ -276,7 +276,7 @@ def test_rfid_scan_unlocks_registered_card_and_rejects_unknown_card():
     assert any(":NET:OLED:STUDY MODE" in line for line in accepted["commands"])
     assert any(":NET:TTSHEX:" in line for line in accepted["commands"])
     tts_command = next(line.split(":NET:TTSHEX:", 1)[1] for line in accepted["commands"] if ":NET:TTSHEX:" in line)
-    assert bytes.fromhex(tts_command).decode("utf-8") == "学生，解锁成功。"
+    assert bytes.fromhex(tts_command).decode("utf-8") == "学生解锁成功。"
 
     rejected = client.post(
         "/api/rfid/scan",
@@ -295,9 +295,9 @@ def test_rfid_speech_uses_natural_names_without_spelling_internal_ids():
     assert rfid_spoken_name("student") == "学生"
     assert rfid_spoken_name("王老师") == "王老师"
     assert rfid_spoken_name("alice_01") == ""
-    assert rfid_access_speech("student") == "学生，解锁成功。"
+    assert rfid_access_speech("student") == "学生解锁成功。"
     assert rfid_access_speech("alice_01") == "解锁成功，欢迎回来。"
-    assert rfid_access_speech("teacher", enrolled=True) == "老师，注册成功。"
+    assert rfid_access_speech("teacher", enrolled=True) == "老师注册成功。"
 
 
 def test_context_db_persists_registered_card_across_app_restart(tmp_path):
@@ -419,6 +419,34 @@ def test_chat_queues_commands_and_ack_line():
     assert diagnostics["state"]["pending_action_count"] == len(chat["actions"]) - 1
 
 
+def test_tts_chunks_are_released_one_at_a_time_after_ack():
+    client = make_client()
+    response = client.post(
+        "/api/hardware/action",
+        json={
+            "device_id": "desktop-agent-001",
+            "type": "tts_speak",
+            "payload": {"text": "我不偏爱谁。他们都很厉害！"},
+        },
+    ).json()
+
+    first_batch = client.get("/api/hardware/commands/desktop-agent-001").json()
+    speech_actions = [action for action in first_batch["actions"] if action["type"] == "tts_speak"]
+    assert len(speech_actions) == 1
+    first_speech = speech_actions[0]
+    assert bytes.fromhex(first_speech["command"].split("NET:TTSHEX:", 1)[1]).decode("utf-8") == "我不偏爱谁。"
+    assert len(response["actions"]) == 2
+
+    client.post("/api/hardware/ack", json={"line": f"BT:ACK:{first_speech['id']}:OK"})
+    assert client.get("/api/hardware/commands/desktop-agent-001").json()["actions"] == []
+    client.app.state.store._tts_ready_at["desktop-agent-001"] = now_utc()
+    second_batch = client.get("/api/hardware/commands/desktop-agent-001").json()
+    assert len(second_batch["actions"]) == 1
+    second_speech = second_batch["actions"][0]
+    assert second_speech["type"] == "tts_speak"
+    assert bytes.fromhex(second_speech["command"].split("NET:TTSHEX:", 1)[1]).decode("utf-8") == "他们都很厉害！"
+
+
 def test_web_chat_does_not_mark_unseen_hardware_online():
     client = make_client()
 
@@ -517,7 +545,7 @@ def test_chat_can_answer_device_status_from_live_snapshot():
     assert "湿度 48.2%" in response["reply"]
     assert response["speech"]
     assert response["state"]["last_speech"] == response["speech"]
-    assert len(response["speech"].encode("utf-8")) <= 90
+    assert len(response["speech"].encode("utf-8")) <= 180
     assert any(":NET:OLED:STATUS OK" in line for line in response["commands"])
 
 
@@ -740,6 +768,29 @@ def test_button_event_interrupts_audio_and_updates_diagnostics():
     assert sensors["last_button_line"] == "BT:BTN:KEY2:SHORT:120"
     assert sensors["last_button_duration_ms"] == 120
     assert sensors["interrupt_seq"] == 1
+    assert sensors["recent_button_events"][-1]["seq"] == sensors["last_button_seq"]
+    assert sensors["recent_button_events"][-1]["line"] == "BT:BTN:KEY2:SHORT:120"
+
+
+def test_button_event_history_keeps_key2_hold_and_release_order():
+    client = make_client()
+
+    client.post(
+        "/api/hardware/button",
+        json={"device_id": "desktop-agent-001", "line": "BT:BTN:KEY2:HOLD_START:600", "source": "stm32"},
+    )
+    client.post(
+        "/api/hardware/button",
+        json={"device_id": "desktop-agent-001", "line": "BT:BTN:KEY2:UP:1200", "source": "stm32"},
+    )
+
+    sensors = client.get("/api/realtime/diagnostics/desktop-agent-001").json()["state"]["sensors"]
+    recent = sensors["recent_button_events"]
+    assert [item["line"] for item in recent[-2:]] == [
+        "BT:BTN:KEY2:HOLD_START:600",
+        "BT:BTN:KEY2:UP:1200",
+    ]
+    assert recent[-2]["seq"] < recent[-1]["seq"]
 
 
 def test_realtime_inject_uses_same_text_loop():

@@ -308,13 +308,14 @@ function Start-VoiceFrontend {
             "--no-auto-start-backend"
         )
     } else {
-        $voiceScript = Join-Path $PSScriptRoot "laptop_wakeword_sidecar.py"
+        $voiceScript = Join-Path $PSScriptRoot "laptop_realtime_listener.py"
         $voiceArguments = @(
             "-u", $voiceScript,
             "--base-url", $BaseUrl,
             "--device-id", $DeviceId,
             "--input-device", $InputDevice,
-            "--confirm-start"
+            "--input-mode", "vad",
+            "--no-auto-start-backend"
         )
     }
 
