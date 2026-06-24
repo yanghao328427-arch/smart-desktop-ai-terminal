@@ -1,11 +1,21 @@
 # 智能桌面 AI 终端｜项目总进度与答辩准备
 
-更新时间：2026-06-24 16:30（北京时间）  
+更新时间：2026-06-24 23:00（北京时间）
 工作目录：`D:\HuaweiMoveData\Users\35267\Documents\New project2`  
 当前分支：`codex/ws-primary-hybrid-20260624`  
-当前提交：`5c2653d Report persistent Space storage configuration`
+当前 ECS 迁移提交：`c4392d2 Migrate defense backend to Aliyun ECS`
 
-> 本文是答辩准备入口。详细研发历史见根目录 `PROJECT_PROGRESS_FULL_2026-06-24.md`；本文重点回答：项目做成了什么、满足了哪些课程要求、当前版本是否可交付、答辩怎么讲、现场怎么演示、还有哪些风险必须收口。
+> 重要：本文后半部分保留了 2026-06-24 16:30 的 Hugging Face 阶段历史盘点，不再代表当前部署真相。当前现场操作只以 `docs/DEFENSE_FINAL_RUNBOOK_2026-06-24.md` 和 `docs/ALIYUN_ECS_MIGRATION_2026-06-24.md` 为准。
+
+## 0. 23:00 最新收口
+
+- 正式主链已从 Hugging Face 迁移到阿里云 ECS。
+- Web：`https://8-163-38-158.sslip.io/console`。
+- ESP32 已直连 ECS HTTP/WebSocket，真实 STM32 ACK 已验收。
+- readiness 已升级为同时检查云模型、持久化、WebSocket、UART、错误 ACK、待执行队列、数据新鲜度和传感器。
+- 小程序源码默认地址已切换到 ECS；开发者工具可用于答辩，正式真机发布仍需自有备案域名。
+- 一键启动仍为 `.\tools\start_defense_demo.cmd`。
+- Hugging Face 仅作为旧版本备份，不再推送当前答辩版本。
 
 ---
 

@@ -96,7 +96,7 @@ python .\tools\cloud_dialogue_smoke.py --base-url http://127.0.0.1:8083
 python .\tools\realtime_readiness_check.py
 ```
 
-该脚本默认访问已部署的阿里云 ECS 服务，只读取健康、设备状态和诊断接口；它要求云端就绪、ESP32 在线、UART 正常、最近上报不超过 20 秒，并检测至少两项真实传感器字段。`"verdict": "PASS"` 才表示可以把页面数据作为当场实时数据展示。ESP32 刚重新插入或重启时，先预留 1—3 分钟完成 Wi-Fi/UART 保活启动，再运行此检查。
+该脚本默认访问已部署的阿里云 ECS 服务，只读取健康、设备状态和诊断接口；它要求云端模型和持久化存储就绪、ESP32 在线、WebSocket 会话已连接、UART 正常、错误 ACK 与待执行队列均为 0、最近上报不超过 20 秒，并检测至少两项真实传感器字段。`"verdict": "PASS"` 才表示可以把页面数据作为当场实时数据展示。ESP32 刚重新插入或重启时，先预留 1—3 分钟完成 Wi-Fi/UART 保活启动，再运行此检查。
 
 整套答辩启动（ECS直连检查、必要时启动relay兜底、网页控制台与语音前端）：
 
@@ -135,6 +135,7 @@ RFID 用户、卡片绑定、会话和对话上下文会持久化到本机 `back
 - [微信小程序路线](docs/MINIPROGRAM_PLAN.md)
 - [本地密钥与配置](docs/LOCAL_SECRET_CONFIG.md)
 - [答辩演示脚本](docs/DEMO_STORYBOARD.md)
+- [答辩最终运行卡](docs/DEFENSE_FINAL_RUNBOOK_2026-06-24.md)
 - [答辩现场运行卡](docs/DEMO_STORYBOARD.md#0-开场自检30-秒)
 - [已安装技能与项目应用方式](docs/SKILLS_APPLIED.md)
 - [测试计划](docs/TEST_PLAN.md)

@@ -24,7 +24,7 @@ python -m pytest -q
 
 ```powershell
 cd "D:\HuaweiMoveData\Users\35267\Documents\New project2"
-python .\tools\cloud_dialogue_smoke.py --base-url http://127.0.0.1:8083
+python .\tools\cloud_dialogue_smoke.py --require-cloud
 ```
 
 验收：
@@ -32,6 +32,7 @@ python .\tools\cloud_dialogue_smoke.py --base-url http://127.0.0.1:8083
 - 输出 `cloud_ready=true`、`ai_provider=dashscope_openai`、`ai_model=qwen-plus`。
 - 三轮对话均有 `reply`，并产生 `tts_speak` / `oled_display` 等动作。
 - 输出不包含 DashScope API Key。
+- 工具会静默读取本地受保护的 `CONTROL_TOKEN` 并只放入请求头，不输出口令。
 - 如果 `cloud_ready=false`，说明后端仍在本地规则兜底；硬件可演示，但答辩时不能宣称已经走真实云端模型。
 - 答辩前强制云端验收可追加 `--require-cloud`，此时 `cloud_ready=false` 会返回非零退出码。
 

@@ -83,7 +83,7 @@
     <view class="panel">
       <view class="panel-title"><text>后端</text><text>{{socketText}}</text></view>
       <view class="form-stack">
-        <input value="{{apiBase}}" placeholder="https://yh001399-smart-desktop-ai-terminal.hf.space" bindinput="onApiBaseInput" />
+        <input value="{{apiBase}}" placeholder="https://8-163-38-158.sslip.io" bindinput="onApiBaseInput" />
         <button bindtap="saveApiBase">保存后端地址</button>
       </view>
       <text class="helper">设备 {{deviceId}} · 协议 {{summary.protocolText}}</text>

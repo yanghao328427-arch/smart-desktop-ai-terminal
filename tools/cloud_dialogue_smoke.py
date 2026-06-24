@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+from pathlib import Path
 import sys
 import time
 import urllib.error
@@ -9,6 +11,7 @@ import urllib.request
 from typing import Any
 
 
+DEFAULT_BASE_URL = "https://8-163-38-158.sslip.io"
 DEFAULT_TURNS = [
     "你是谁，能像朋友一样陪我聊几句吗？",
     "现在状态怎么样？结合温湿度和距离告诉我。",
@@ -16,9 +19,36 @@ DEFAULT_TURNS = [
 ]
 
 
-def request_json(method: str, url: str, payload: dict[str, Any] | None = None, timeout: int = 35) -> dict[str, Any]:
+def resolve_control_token(explicit: str | None = None) -> str:
+    if explicit:
+        return explicit.strip()
+    configured = os.environ.get("CONTROL_TOKEN", "").strip()
+    if configured:
+        return configured
+    env_path = Path(__file__).resolve().parents[1] / "backend" / ".env"
+    if not env_path.exists():
+        return ""
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() == "CONTROL_TOKEN":
+            return value.strip().strip("'\"")
+    return ""
+
+
+def request_json(
+    method: str,
+    url: str,
+    payload: dict[str, Any] | None = None,
+    timeout: int = 35,
+    control_token: str = "",
+) -> dict[str, Any]:
     data = None
     headers = {"Content-Type": "application/json"}
+    if control_token:
+        headers["X-Demo-Token"] = control_token
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
@@ -33,12 +63,25 @@ def short_text(text: str, limit: int = 90) -> str:
     return normalized[: limit - 1] + "…"
 
 
-def wait_for_acks(base_url: str, device_id: str, timeout_seconds: float) -> dict[str, Any]:
+def wait_for_acks(
+    base_url: str,
+    device_id: str,
+    timeout_seconds: float,
+    control_token: str = "",
+) -> dict[str, Any]:
     deadline = time.monotonic() + max(0.0, timeout_seconds)
-    diagnostics = request_json("GET", f"{base_url}/api/realtime/diagnostics/{device_id}")
+    diagnostics = request_json(
+        "GET",
+        f"{base_url}/api/realtime/diagnostics/{device_id}",
+        control_token=control_token,
+    )
     while diagnostics["state"].get("pending_action_count", 0) and time.monotonic() < deadline:
         time.sleep(0.5)
-        diagnostics = request_json("GET", f"{base_url}/api/realtime/diagnostics/{device_id}")
+        diagnostics = request_json(
+            "GET",
+            f"{base_url}/api/realtime/diagnostics/{device_id}",
+            control_token=control_token,
+        )
     return diagnostics
 
 
@@ -46,8 +89,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run a safe cloud-dialogue smoke test against the running backend."
     )
-    parser.add_argument("--base-url", default="http://127.0.0.1:8083")
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--device-id", default="desktop-agent-001")
+    parser.add_argument(
+        "--control-token",
+        default=None,
+        help="Control token override. By default reads CONTROL_TOKEN or backend/.env without printing it.",
+    )
     parser.add_argument(
         "--turn",
         action="append",
@@ -69,10 +117,15 @@ def main() -> int:
 
     base_url = args.base_url.rstrip("/")
     turns = args.turns or DEFAULT_TURNS
+    control_token = resolve_control_token(args.control_token)
 
     try:
-        health = request_json("GET", f"{base_url}/api/health")
-        state_before = request_json("GET", f"{base_url}/api/state/{args.device_id}")
+        health = request_json("GET", f"{base_url}/api/health", control_token=control_token)
+        state_before = request_json(
+            "GET",
+            f"{base_url}/api/state/{args.device_id}",
+            control_token=control_token,
+        )
 
         transcript: list[dict[str, Any]] = []
         for index, text in enumerate(turns, start=1):
@@ -80,6 +133,7 @@ def main() -> int:
                 "POST",
                 f"{base_url}/api/chat",
                 {"device_id": args.device_id, "text": text, "source": "cloud_smoke"},
+                control_token=control_token,
             )
             fallback_detected = "云端暂不可用" in chat["reply"] or "已使用本地规则" in chat["reply"]
             transcript.append(
@@ -93,10 +147,28 @@ def main() -> int:
                     "actions": [action["type"] for action in chat["actions"]],
                 }
             )
-            wait_for_acks(base_url, args.device_id, args.ack_wait_seconds)
+            wait_for_acks(
+                base_url,
+                args.device_id,
+                args.ack_wait_seconds,
+                control_token=control_token,
+            )
 
-        diagnostics = wait_for_acks(base_url, args.device_id, args.ack_wait_seconds)
-    except (OSError, urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
+        diagnostics = wait_for_acks(
+            base_url,
+            args.device_id,
+            args.ack_wait_seconds,
+            control_token=control_token,
+        )
+    except urllib.error.HTTPError as exc:
+        error = (
+            f"HTTP {exc.code}: control token is missing or invalid"
+            if exc.code in {401, 403}
+            else f"HTTP {exc.code}: {exc.reason}"
+        )
+        print(json.dumps({"ok": False, "error": error}, ensure_ascii=False, indent=2))
+        return 1
+    except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False, indent=2))
         return 1
 

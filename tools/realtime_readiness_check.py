@@ -117,8 +117,12 @@ def main() -> int:
     sensor_keys = present_sensor_keys(sensors)
     checks = {
         "cloud_ready": health.get("cloud_ready") is True,
+        "persistent_storage": health.get("persistent_storage") is True,
         "device_online": state.get("online") is True,
+        "websocket_session_connected": state.get("session_connected") is True,
         "uart_ok": state.get("uart_ok") is True,
+        "ack_errors_clear": state.get("ack_err_count", 0) == 0,
+        "action_queue_clear": state.get("pending_action_count", 0) == 0,
         "state_is_fresh": state_age is not None and state_age <= args.max_age_seconds,
         "diagnostics_is_fresh": diagnostics_age is not None and diagnostics_age <= args.max_age_seconds,
         "enough_sensor_fields": len(sensor_keys) >= args.min_sensor_count,
@@ -135,7 +139,12 @@ def main() -> int:
         "snapshot": {
             "ai_provider": health.get("ai_provider"),
             "ai_model": health.get("ai_model"),
+            "persistent_storage": health.get("persistent_storage"),
             "edge_id": state.get("edge_id"),
+            "session_connected": state.get("session_connected"),
+            "ack_ok_count": state.get("ack_ok_count"),
+            "ack_err_count": state.get("ack_err_count"),
+            "pending_action_count": state.get("pending_action_count"),
             "state_last_seen": state.get("last_seen"),
             "diagnostics_last_seen": diagnostic_state.get("last_seen"),
             "state_age_seconds": round(state_age, 1) if state_age is not None else None,
