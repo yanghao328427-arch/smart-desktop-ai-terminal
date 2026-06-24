@@ -355,12 +355,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         configured_provider = settings.ai_provider.lower()
         cloud_ready = configured_provider == "dashscope_openai" and bool(settings.dashscope_api_key)
         provider = "dashscope_openai" if cloud_ready else "mock"
+        persistent_storage = settings.context_db_path.is_relative_to(Path("/data"))
         return HealthResponse(
             status="ok",
             protocol=settings.protocol,
             ai_provider=provider,
             ai_model=settings.ai_model if cloud_ready else "local-rules",
             cloud_ready=cloud_ready,
+            persistent_storage=persistent_storage,
             device_id=settings.device_id,
             edge_id=settings.edge_id,
         )

@@ -37,6 +37,7 @@ class HealthResponse(BaseModel):
     ai_provider: str
     ai_model: str
     cloud_ready: bool
+    persistent_storage: bool = False
     device_id: str
     edge_id: str
 

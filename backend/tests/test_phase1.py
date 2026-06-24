@@ -82,6 +82,7 @@ def test_health_and_default_state():
     assert health["ai_provider"] == "mock"
     assert health["ai_model"] == "local-rules"
     assert health["cloud_ready"] is False
+    assert health["persistent_storage"] is False
 
     state = client.get("/api/state/desktop-agent-001").json()
     assert state["device_id"] == "desktop-agent-001"
