@@ -215,6 +215,8 @@ def command_from_action(action: ActionSpec) -> str:
         if state not in {"IDLE", "BUSY", "OFF"}:
             state = "IDLE"
         return f"NET:AI:{state}"
+    if action_type == "telemetry_request":
+        return "NET:TELEMETRY?"
 
     raise ValueError(f"unsupported action type: {action_type}")
 

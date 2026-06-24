@@ -161,6 +161,7 @@ class RuntimeStore:
                 sensors.pop("distance_cm", None)
                 device.sensors.pop("distance_cm", None)
             device.sensors.update(sensors)
+            device.sensors["last_telemetry_at"] = stamp.isoformat()
             if voice_state is not None:
                 device.voice_state = voice_state
             device.online = True

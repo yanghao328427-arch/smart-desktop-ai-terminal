@@ -62,6 +62,10 @@ def test_audio_stop_action_uses_tts_stop_command():
     assert command_from_action(ActionSpec(type="audio_stop", payload={})) == "NET:TTS:STOP"
 
 
+def test_telemetry_request_action_is_read_only():
+    assert command_from_action(ActionSpec(type="telemetry_request", payload={})) == "NET:TELEMETRY?"
+
+
 def test_user_context_action_uses_protocol_safe_fields():
     command = command_from_action(
         ActionSpec(

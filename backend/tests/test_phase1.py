@@ -643,6 +643,7 @@ def test_hardware_telemetry_updates_sensor_snapshot():
     assert data["sensors"]["interaction_hint"] == "object_near"
     assert data["sensors"]["rgb_status"] == "near_object"
     assert data["sensors"]["rgb_reason"] == "interaction_zone"
+    assert data["sensors"]["last_telemetry_at"]
 
 
 def test_hardware_telemetry_clears_stale_distance_when_disabled():
@@ -760,6 +761,18 @@ def test_hardware_action_queues_ui_state_for_polling_when_no_session():
     assert data["commands"][0].endswith(":NET:UI:LISTEN")
     queued = client.get("/api/hardware/commands/desktop-agent-001").json()
     assert queued["commands"] == data["commands"]
+
+
+def test_hardware_action_queues_read_only_telemetry_self_check():
+    client = make_client()
+
+    response = client.post(
+        "/api/hardware/action",
+        json={"type": "telemetry_request", "payload": {}, "source": "web_self_check"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["commands"][0].endswith(":NET:TELEMETRY?")
 
 
 def test_manual_lock_priority_blocks_lower_priority_ai_unlock():

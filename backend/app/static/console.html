@@ -1497,6 +1497,38 @@
     }
     .history-summary .info-box { min-height: 86px; }
     .proof-card { position: relative; }
+    .self-check-panel {
+      margin-top: 14px;
+      padding: 14px;
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 12px;
+      align-items: stretch;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: linear-gradient(135deg, #f8fbff, #f7fffb);
+    }
+    .self-check-layer {
+      padding: 12px;
+      display: grid;
+      gap: 6px;
+      border: 1px solid rgba(18, 103, 241, 0.12);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.9);
+    }
+    .self-check-layer span { color: var(--muted); font-size: 12px; font-weight: 700; }
+    .self-check-layer strong { font-size: 16px; }
+    .self-check-action {
+      min-width: 142px;
+      padding: 0 16px;
+      border: 0;
+      border-radius: 12px;
+      color: #fff;
+      background: #1267f1;
+      font-weight: 820;
+      cursor: pointer;
+    }
+    .self-check-action:disabled { cursor: wait; opacity: 0.62; }
     .trend-caption { color: var(--subtle); font-size: 11px; font-weight: 650; }
     .empty-state { min-height: 76px; display: grid; place-items: center; padding: 18px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); background: #fbfdff; font-size: 12px; text-align: center; }
     .data-note { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; }
@@ -1517,6 +1549,8 @@
     .sensor-body { align-content: start; }
     .work-grid > .card { height: auto; min-height: 416px; }
     @media (max-width: 980px) {
+      .self-check-panel { grid-template-columns: 1fr; }
+      .self-check-action { min-height: 44px; }
       .bottom-card { min-height: 0; }
       .button-row { grid-template-columns: 1fr; }
     }
@@ -1576,6 +1610,11 @@
             <article class="proof-card"><div class="proof-top"><div class="proof-title"><span class="proof-icon">ACK</span><span>STM32 ACK</span></div><span id="proof-ack-status" class="tiny-pill warn">暂无 ACK</span></div><div class="proof-kpis"><span>最近延迟：<b id="proof-ack-latency">暂无统计</b></span><span>成功率：<b id="proof-ack-rate">暂无统计</b></span></div><div id="chart-ack" class="line-chart green"></div></article>
             <article class="proof-card"><div class="proof-top"><div class="proof-title"><span class="proof-icon cyan">SEN</span><span>传感器</span></div><span id="proof-sensor-status" class="tiny-pill warn">等待上报</span></div><div class="proof-kpis"><span>已上报：<b id="proof-sensor-online">0/6</b></span><span>待确认：<b id="proof-sensor-alerts">0</b></span></div><div id="chart-sensor" class="spark cyan"></div></article>
           </div>
+          <div class="self-check-panel">
+            <div class="self-check-layer"><span>第一层 · 被动自检</span><strong id="passive-check-title">等待数据</strong><span id="passive-check-detail">检查在线状态、遥测新鲜度和六类传感器</span></div>
+            <div class="self-check-layer"><span>第二层 · 主动自检</span><strong id="active-check-title">尚未执行</strong><span id="active-check-detail">只读查询 STM32，并验证新遥测与 ACK</span></div>
+            <button id="run-self-check" class="self-check-action" type="button">执行双重自检</button>
+          </div>
         </section>
         <section id="work-pages" class="work-grid hidden-group">
           <article id="chat" class="card chat-panel view">
@@ -1584,7 +1623,7 @@
             <form id="chat-form" class="composer"><input id="chat-input" autocomplete="off" placeholder="输入指令或问题，Enter 发送"><button class="send-btn" type="submit">➤</button></form>
           </article>
           <article id="loop" class="card loop-panel view"><div class="card-title"><h2>闭环链路（实时）</h2><span id="loop-ready-pill" class="tiny-pill warn">等待数据</span></div><div class="loop-body"><div id="loop-steps" class="loop-icons"></div><div id="loop-events" class="loop-events"></div><div class="ready-banner"><span id="loop-state">等待真实链路</span><span id="loop-summary">等待真实输入、执行与 ACK</span></div></div></article>
-          <article id="sensors" class="card sensor-panel view"><div class="card-title"><h2>传感器仪表盘</h2><span id="sensor-meta" class="muted">等待上报</span></div><div class="sensor-body"><div id="sensor-metrics" class="metric-grid"></div><div class="info-box"><span>状态说明</span><strong>温湿度、距离、电位器、NTC、编码器会随 STM32 上报自动刷新。</strong><span class="data-note">如果某项显示“未上报”，说明该传感器还没有新数据进入后端。</span></div></div></article>
+          <article id="sensors" class="card sensor-panel view"><div class="card-title"><h2>传感器仪表盘</h2><span id="sensor-meta" class="muted">等待上报</span></div><div class="sensor-body"><div id="sensor-metrics" class="metric-grid"></div><div class="info-box"><span>状态说明</span><strong>AHT20、超声波、电位器、NTC、循迹与编码器均纳入实时状态。</strong><span class="data-note">实时总览的双重自检会同时核对遥测新鲜度，以及 STM32 主动查询的返回和 ACK。</span></div></div></article>
           <article id="hardware-page" class="card hardware-page view"><div class="view-title"><h2>硬件控制</h2><p>点击按钮直接下发动作到真实执行链路；页面会在日志里记录操作和 ACK 状态。</p></div><div id="hardware" class="hardware-card"><div class="mini-title"><span>执行器控制台</span><span id="hardware-meta" class="muted">直连动作接口</span></div><div class="hardware-grid"><button class="tool-card" data-tool="fan_on" type="button"><span class="tool-icon">风</span><span>风扇开启</span><small>action</small></button><button class="tool-card" data-tool="fan_off" type="button"><span class="tool-icon">停</span><span>风扇关闭</span><small>action</small></button><button class="tool-card" data-tool="beep" type="button"><span class="tool-icon">声</span><span>蜂鸣提醒</span><small>action</small></button><button class="tool-card warn" data-tool="lock" type="button"><span class="tool-icon">锁</span><span>锁定</span><small>action</small></button><button class="tool-card" data-tool="unlock" type="button"><span class="tool-icon">开</span><span>解锁</span><small>action</small></button></div></div><div class="info-box"><span>操作提示</span><strong>连接 WS 后触发动作，ACK 状态会同步显示在日志和诊断页。</strong><span class="data-note">管理员密码验证成功后仅在本次打开页面期间有效；未验证时需要刷已注册卡进入上下文。</span></div></article>
         </section>
         <section id="bottom-pages" class="bottom-grid hidden-group">
@@ -1606,6 +1645,8 @@
     let activeEnrollId = null, enrollTimer = null;
     let currentDialogue = [], localEvents = [];
     let lastHealth = null, lastState = null, lastDiag = null;
+    let selfCheckRunning = false;
+    let activeSelfCheck = {status:"idle", title:"尚未执行", detail:"只读查询 STM32，并验证新遥测与 ACK"};
     const $ = (id) => document.getElementById(id);
     const $$ = (selector) => Array.from(document.querySelectorAll(selector));
     const has = (v) => v !== undefined && v !== null && v !== "";
@@ -1666,14 +1707,41 @@
     };
     const sensorsOf = (s = {}) => {
       const items = [
-        {label:"温度", present:s.aht20_ok === true && has(s.temperature_c), value:s.aht20_ok === true ? sensorValue(s.temperature_c, " C") : EMPTY, tone:"green"},
-        {label:"湿度", present:s.aht20_ok === true && has(s.humidity_pct), value:s.aht20_ok === true ? sensorValue(s.humidity_pct, " %") : EMPTY, tone:"blue"},
-        {label:"距离", present:has(s.distance_cm) || has(s.distance_ok), value:s.distance_enabled === false ? "未启用" : (s.distance_ok === true ? sensorValue(s.distance_cm, " cm") : EMPTY), tone:"green"},
+        {label:"AHT20 状态", present:has(s.aht20_ok), healthy:s.aht20_ok === true, value:s.aht20_ok === true ? "正常" : (s.aht20_ok === false ? "异常" : EMPTY), tone:"green"},
+        {label:"温度", present:s.aht20_ok === true && has(s.temperature_c), healthy:s.aht20_ok === true && has(s.temperature_c), value:s.aht20_ok === true ? sensorValue(s.temperature_c, " C") : EMPTY, tone:"green"},
+        {label:"湿度", present:s.aht20_ok === true && has(s.humidity_pct), healthy:s.aht20_ok === true && has(s.humidity_pct), value:s.aht20_ok === true ? sensorValue(s.humidity_pct, " %") : EMPTY, tone:"blue"},
+        {label:"超声波状态", present:has(s.distance_ok), healthy:s.distance_enabled !== false && s.distance_ok === true, value:!has(s.distance_ok) ? EMPTY : (s.distance_enabled === false ? "未启用" : (s.distance_ok === true ? "正常" : "异常")), tone:"green"},
+        {label:"距离", present:s.distance_ok === true && has(s.distance_cm), healthy:s.distance_ok === true && has(s.distance_cm), value:s.distance_enabled === false ? "未启用" : (s.distance_ok === true ? sensorValue(s.distance_cm, " cm") : EMPTY), tone:"green"},
         {label:"电位器", present:has(s.pot_raw), value:has(s.pot_raw) ? `${s.pot_raw}${has(s.pot_pct) ? ` / ${s.pot_pct}%` : ""}` : EMPTY, tone:"blue"},
         {label:"NTC", present:has(s.ntc_raw), value:has(s.ntc_raw) ? `${s.ntc_raw}${has(s.ntc_pct) ? ` / ${s.ntc_pct}%` : ""}` : EMPTY, tone:"orange"},
+        {label:"循迹传感器", present:has(s.tracking_signal), value:has(s.tracking_signal) ? (s.tracking_signal ? "高电平" : "低电平") : EMPTY, tone:"blue"},
         {label:"编码器", present:has(s.encoder_position), value:has(s.encoder_position) ? `${s.encoder_position} (${Number(s.encoder_delta || 0) >= 0 ? "+" : ""}${s.encoder_delta || 0})` : EMPTY, tone:"blue"},
+        {label:"编码器按键", present:has(s.encoder_button), value:has(s.encoder_button) ? (s.encoder_button ? "按下" : "松开") : EMPTY, tone:"blue"},
+        {label:"环境判断", present:has(s.env_state), value:s.env_state || EMPTY, tone:"green"},
+        {label:"RGB 判断", present:has(s.rgb_status), value:has(s.rgb_status) ? `${s.rgb_status}${has(s.rgb_reason) ? ` / ${s.rgb_reason}` : ""}` : EMPTY, tone:"orange"},
       ];
-      return {items, count: items.filter((item) => item.present).length, total: items.length};
+      const modules = [
+        {label:"AHT20", ok:s.aht20_ok === true && has(s.temperature_c) && has(s.humidity_pct)},
+        {label:"超声波", ok:s.distance_enabled !== false && s.distance_ok === true && has(s.distance_cm)},
+        {label:"电位器", ok:has(s.pot_raw)},
+        {label:"NTC", ok:has(s.ntc_raw)},
+        {label:"循迹", ok:has(s.tracking_signal)},
+        {label:"编码器", ok:has(s.encoder_position) && has(s.encoder_button)},
+      ];
+      return {items, count: modules.filter((item) => item.ok).length, total: modules.length, modules};
+    };
+    const telemetryAge = (s = {}) => {
+      if (!s.last_telemetry_at) return null;
+      const age = (Date.now() - new Date(s.last_telemetry_at).getTime()) / 1000;
+      return Number.isFinite(age) ? Math.max(0, age) : null;
+    };
+    const passiveSelfCheck = (state = {}) => {
+      const s = state.sensors || {}, info = sensorsOf(s), age = telemetryAge(s);
+      const fresh = age !== null && age <= 30;
+      const missing = info.modules.filter((item) => !item.ok).map((item) => item.label);
+      const ok = state.online === true && state.uart_ok === true && fresh && missing.length === 0;
+      const detail = !state.online ? "设备离线" : (!state.uart_ok ? "UART 未确认" : (!fresh ? (age === null ? "尚无遥测时间" : `遥测已过期 ${Math.round(age)} 秒`) : (missing.length ? `待确认：${missing.join("、")}` : `六类传感器齐全，遥测 ${Math.round(age)} 秒前更新`)));
+      return {ok, detail, info, age};
     };
     const ackLatency = (d = {}) => { const a = (d.recent_actions || []).slice().reverse().find((x) => x.sent_at && x.acked_at); if (!a) return null; const ms = new Date(a.acked_at).getTime() - new Date(a.sent_at).getTime(); return Number.isFinite(ms) && ms >= 0 ? Math.round(ms) : null; };
     const miniSpark = (values, tone = "") => { const nums = values.filter((v) => Number.isFinite(Number(v))).slice(-6); if (!nums.length) return `<span class="muted">等待采样</span>`; const min = Math.min(...nums), max = Math.max(...nums), range = Math.max(1, max - min); return `<div class="mini-spark ${tone}">${nums.map((v) => `<i style="--h:${24 + Math.round(((v - min) / range) * 52)}"></i>`).join("")}</div>`; };
@@ -1728,6 +1796,19 @@
       pill("proof-sensor-status", info.count ? "已上报" : "等待上报", info.count ? "ok" : "warn"); text("proof-sensor-online", `${info.count}/${info.total}`); text("proof-sensor-alerts", String((state.pending_action_count || 0) + (state.ack_err_count || 0) + (s.last_asr_error ? 1 : 0)));
       line("chart-ai", history.refreshMs); line("chart-edge", history.temp, "green"); line("chart-ack", history.ackMs, "green"); bars(history.sensors);
     };
+    const renderSelfCheck = (state) => {
+      const passive = passiveSelfCheck(state);
+      text("passive-check-title", passive.ok ? "通过" : "未通过");
+      text("passive-check-detail", passive.detail);
+      const passiveTitle = $("passive-check-title");
+      if (passiveTitle) passiveTitle.style.color = passive.ok ? "#15803d" : "#b54708";
+      text("active-check-title", activeSelfCheck.title);
+      text("active-check-detail", activeSelfCheck.detail);
+      const activeTitle = $("active-check-title");
+      if (activeTitle) activeTitle.style.color = activeSelfCheck.status === "passed" ? "#15803d" : (activeSelfCheck.status === "failed" ? "#dc2626" : "#b54708");
+      const button = $("run-self-check");
+      if (button) { button.disabled = selfCheckRunning; button.textContent = selfCheckRunning ? "自检执行中…" : "执行双重自检"; }
+    };
     const renderSensors = (state) => { const info = sensorsOf(state.sensors || {}); text("sensor-meta", `已上报 ${info.count}/${info.total}`); text("phone-sensor-status", `已上报 ${info.count}/${info.total}`); $("sensor-metrics").innerHTML = info.items.map((item) => `<div class="metric"><span>${item.label}</span><strong>${item.value}</strong>${miniSpark(item.present && item.label === "温度" ? history.temp : [], item.tone)}</div>`).join(""); $("phone-metric-grid").innerHTML = info.items.map((item) => `<div class="phone-metric"><span>${item.label}</span><strong>${item.value}</strong></div>`).join(""); };
     const renderActions = (diag = {}) => { const actions = (diag.recent_actions || []).slice().reverse().slice(0, 6); const el = $("action-list"); if (!actions.length) { el.innerHTML = `<div class="action-row"><span class="dot"></span><span>暂无动作记录</span><span>--</span><span>${NO_STATS}</span></div>`; return; } el.innerHTML = actions.map((a) => `<div class="action-row"><span class="dot"></span><span>${a.type}</span><span>${actionTime(a)}</span><span class="${a.status === "failed" ? "bad-text" : "success-text"}">${statusText(a.status)}</span></div>`).join(""); };
     const renderHistory = (state = {}, diag = {}) => {
@@ -1777,12 +1858,49 @@
     const renderRfid = (state) => { const s = state.sensors || {}, uid = s.last_rfid_uid, ok = s.last_rfid_authorized === true, user = state.current_user; pill("rfid-status-pill", uid ? (ok ? "已通过" : "已拒绝") : "暂无记录", uid ? (ok ? "ok" : "bad") : "warn"); $("rfid-current").innerHTML = `<span>最新 UID</span><strong>${uid || NONE}</strong><span class="tiny-pill ${uid ? (ok ? "ok" : "bad") : "warn"}">${uid ? (ok ? "授权通过" : "未授权") : "等待刷卡"}</span><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><span>时间</span><span>来源</span><strong style="font-size:14px">${t(s.last_rfid_at)}</strong><strong style="font-size:14px">${s.last_rfid_source || "暂无"}</strong><span>用户</span><span>上下文</span><strong style="font-size:14px">${user ? `${user.name}/${user.mode}` : "暂无"}</strong><strong style="font-size:14px">${user && user.profile_summary ? user.profile_summary : "未设置"}</strong></div>`; };
     const renderAsr = (state) => { const s = state.sensors || {}, hasAudio = has(s.last_audio_path) || has(s.last_audio_bytes) || has(s.last_asr_provider), ok = s.last_asr_ok === true; pill("asr-status-pill", hasAudio ? (ok ? "识别成功" : "识别失败") : "暂无记录", hasAudio ? (ok ? "ok" : "bad") : "warn"); $("asr-current").innerHTML = `<span>最新录音</span><strong style="font-size:14px">${filename(s.last_audio_path)}</strong><span class="tiny-pill ${hasAudio ? (ok ? "ok" : "bad") : "warn"}">${hasAudio ? (ok ? "已识别" : "失败") : "等待上传"}</span><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><span>时间</span><span>来源</span><strong style="font-size:14px">${t(s.last_asr_at)}</strong><strong style="font-size:14px">${s.last_asr_provider || "暂无"}</strong></div>`; };
     const renderDiag = (health, state, diag) => { const rows = [["云端 AI", health.cloud_ready === true ? (health.ai_model || "OK") : "未就绪"], ["设备链路", state.session_connected ? "WebSocket" : (state.online ? "HTTP 轮询" : "未连接")], ["UART", state.uart_ok ? "OK" : "未确认"], ["执行队列", `${state.pending_action_count || 0} 个待 ACK`], ["最近 ACK", state.last_ack ? `${state.last_ack.ok ? "OK" : "ERR"} ${shortId(state.last_ack.action_id)}` : "暂无"], ["最近上报", t(state.last_seen)]]; $("diagnostics-list").innerHTML = rows.map(([k, v]) => `<div class="diag-row"><span>${k}</span><strong>${v}</strong></div>`).join(""); text("diagnostics", JSON.stringify(diag, null, 2)); text("diagnostics-meta", `刷新 ${t(new Date())}`); };
-    const render = (health, state, diag, refreshMs) => { lastHealth = health; lastState = state; lastDiag = diag; currentDialogue = state.recent_dialogue || []; renderSystem(health, state, diag); renderProof(health, state, diag, refreshMs); renderSensors(state); renderRfid(state); renderAsr(state); renderActions(diag); renderHistory(state, diag); renderDiag(health, state, diag); renderLogs(); };
+    const render = (health, state, diag, refreshMs) => { lastHealth = health; lastState = state; lastDiag = diag; currentDialogue = state.recent_dialogue || []; renderSystem(health, state, diag); renderProof(health, state, diag, refreshMs); renderSelfCheck(state); renderSensors(state); renderRfid(state); renderAsr(state); renderActions(diag); renderHistory(state, diag); renderDiag(health, state, diag); renderLogs(); };
     const refresh = async () => { if (refreshInFlight) return; refreshInFlight = true; try { const started = performance.now(); const [health, state, diag] = await Promise.all([api("/api/health"), api(`/api/state/${deviceId}`), api(`/api/realtime/diagnostics/${deviceId}`)]); render(health, state, diag, performance.now() - started); } finally { refreshInFlight = false; } };
     const connectWs = () => { if (ws && ws.readyState === WebSocket.OPEN) return; const proto = location.protocol === "https:" ? "wss" : "ws"; ws = new WebSocket(`${proto}://${location.host}/api/realtime/ws?device_id=${deviceId}`); ws.onopen = () => { text("connect", "已连接"); text("hardware-meta", "WS 已连接"); }; ws.onclose = () => { text("connect", "已断开"); text("hardware-meta", "WS 已断开"); }; ws.onerror = () => text("connect", "连接失败"); ws.onmessage = (event) => { try { const data = JSON.parse(event.data); if (data.type === "assistant" && data.text) local(data.text, "assistant"); refresh().catch((err) => local(err.message)); } catch (err) { local(err.message); } }; };
     const sendChat = async (raw) => { if (!ensureAccessContext()) return; const clean = String(raw || "").trim(); if (!clean) return; local(clean, "user"); const data = await api("/api/chat", {method:"POST", body:JSON.stringify({device_id:deviceId, text:clean, source:"web_console"})}); local(data.reply, "assistant"); if (data.actions && data.actions.length) local(`已生成 ${data.actions.length} 条设备动作，等待 ACK。`, "assistant"); await refresh(); };
     const HW = {fan_on:{label:"打开风扇", type:"fan_control", payload:{state:"on", level:2}}, fan_off:{label:"关闭风扇", type:"fan_control", payload:{state:"off"}}, beep:{label:"蜂鸣提醒", type:"buzzer_alert", payload:{}}, lock:{label:"锁定", type:"lock_control", payload:{state:"on"}}, unlock:{label:"解锁", type:"lock_control", payload:{state:"off"}}};
     const sendHardware = async (key) => { if (!ensureAccessContext()) return; const spec = HW[key]; if (!spec) return; const data = await api("/api/hardware/action", {method:"POST", body:JSON.stringify({device_id:deviceId, type:spec.type, payload:spec.payload, mark_sent:true})}); local(`${spec.label}已提交，等待设备 ACK。`, "assistant"); await refresh(); };
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const runSelfCheck = async () => {
+      if (selfCheckRunning) return;
+      if (!administratorPasswordVerified) { local("主动自检需要先输入正确的管理员密码"); return; }
+      selfCheckRunning = true;
+      activeSelfCheck = {status:"running", title:"执行中", detail:"正在请求 STM32 立即返回遥测并等待 ACK"};
+      renderSelfCheck(lastState || {});
+      const beforeTelemetry = new Date((lastState?.sensors || {}).last_telemetry_at || 0).getTime();
+      try {
+        const data = await api("/api/hardware/action", {method:"POST", body:JSON.stringify({device_id:deviceId, type:"telemetry_request", payload:{}, mark_sent:true, source:"web_self_check"})});
+        const actionId = data.actions?.[0]?.id;
+        if (!actionId) throw new Error("自检动作未生成");
+        const deadline = Date.now() + 15000;
+        while (Date.now() < deadline) {
+          await sleep(700);
+          const [state, diag] = await Promise.all([api(`/api/state/${deviceId}`), api(`/api/realtime/diagnostics/${deviceId}`)]);
+          lastState = state; lastDiag = diag;
+          const action = (diag.recent_actions || []).find((item) => item.id === actionId);
+          const telemetryTime = new Date((state.sensors || {}).last_telemetry_at || 0).getTime();
+          const telemetryReturned = telemetryTime > beforeTelemetry;
+          if (action?.status === "failed") throw new Error(action.error || "STM32 返回错误 ACK");
+          if (action?.status === "acked" && telemetryReturned) {
+            activeSelfCheck = {status:"passed", title:"通过", detail:`STM32 ACK 成功，新遥测已返回 · ${t(state.sensors.last_telemetry_at)}`};
+            local("双重自检通过：传感器状态完整，STM32 主动遥测与 ACK 均正常", "assistant");
+            await refresh();
+            return;
+          }
+        }
+        throw new Error("15 秒内未同时收到新遥测和 ACK");
+      } catch (err) {
+        activeSelfCheck = {status:"failed", title:"未通过", detail:err.message};
+        local(`双重自检未通过：${err.message}`);
+      } finally {
+        selfCheckRunning = false;
+        renderSelfCheck(lastState || {});
+      }
+    };
     const sendRecognized = async (raw) => { const clean = String(raw || "").trim(); if (!clean) return; const data = await api("/api/asr/recognized", {method:"POST", body:JSON.stringify({device_id:deviceId, text:clean, source:"browser_speech", inject:true})}); local(`ASR ${data.text}`); if (data.chat) local(data.chat.reply, "assistant"); await refresh(); };
     const speech = () => { if (recognition) return recognition; const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) return null; recognition = new SR(); recognition.lang = "zh-CN"; recognition.continuous = false; recognition.interimResults = false; recognition.maxAlternatives = 1; recognition.onstart = () => { voiceActive = true; text("voice-pill", "语音识别 识别中"); }; recognition.onresult = (event) => { const value = (event.results?.[0]?.[0]?.transcript || "").trim(); if (!value) return local("语音识别结果为空"); local(value, "user"); sendRecognized(value).catch((err) => local(err.message)); }; recognition.onerror = (event) => local(event.error === "not-allowed" ? "浏览器未授予麦克风权限" : `语音识别失败: ${event.error}`); recognition.onend = () => { voiceActive = false; text("voice-pill", "语音识别 空闲中"); }; return recognition; };
     const stopEnrollPolling = () => { if (enrollTimer) clearTimeout(enrollTimer); enrollTimer = null; };
@@ -1798,6 +1916,7 @@
     $$("[data-view]").forEach((button) => button.addEventListener("click", () => showView(button.dataset.view)));
     $("refresh").addEventListener("click", () => refresh().catch((err) => local(err.message)));
     $("connect").addEventListener("click", connectWs);
+    $("run-self-check").addEventListener("click", () => runSelfCheck().catch((err) => local(err.message)));
     $("phone-rfid-focus").addEventListener("click", () => showView("rfid"));
     $("voice-toggle").addEventListener("click", () => { const rec = speech(); if (!rec) return local("当前浏览器不支持 Web Speech API，请使用 ASR 上传"); if (voiceActive) rec.stop(); else rec.start(); });
     $("control-token").value = "";
