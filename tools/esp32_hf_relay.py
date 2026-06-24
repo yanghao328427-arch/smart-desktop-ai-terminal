@@ -227,15 +227,15 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8090, help="LAN listen port")
     parser.add_argument(
         "--upstream",
-        default="https://yh001399-smart-desktop-ai-terminal.hf.space",
-        help="Hugging Face Space base URL",
+        default="http://8.163.38.158",
+        help="Aliyun ECS fallback backend base URL",
     )
     parser.add_argument("--timeout", type=float, default=20.0, help="Upstream connect/request timeout")
     args = parser.parse_args()
 
     upstream_base = args.upstream.rstrip("/")
-    if not upstream_base.startswith("https://"):
-        parser.error("--upstream must use https://")
+    if not upstream_base.startswith(("http://", "https://")):
+        parser.error("--upstream must use http:// or https://")
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
     if args.timeout <= 0:

@@ -28,6 +28,16 @@ def test_relay_builds_filtered_upstream_websocket_url():
     )
 
 
+def test_relay_builds_plain_websocket_url_for_http_upstream():
+    assert upstream_ws_url(
+        "http://8.163.38.158",
+        "device_id=desktop-agent-001&edge_id=esp32s3-sense-001",
+    ) == (
+        "ws://8.163.38.158/api/realtime/ws"
+        "?device_id=desktop-agent-001&edge_id=esp32s3-sense-001"
+    )
+
+
 def test_relay_health_reports_hybrid_mode():
     client = TestClient(create_app("https://example.test", 5))
     response = client.get("/relay/health")

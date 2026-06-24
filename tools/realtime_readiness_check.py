@@ -9,7 +9,7 @@ import urllib.request
 from typing import Any
 
 
-DEFAULT_BASE_URL = "https://yh001399-smart-desktop-ai-terminal.hf.space"
+DEFAULT_BASE_URL = "https://8-163-38-158.sslip.io"
 DEFAULT_DEVICE_ID = "desktop-agent-001"
 SENSOR_KEYS = (
     "temperature_c",

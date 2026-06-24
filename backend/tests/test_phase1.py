@@ -90,6 +90,15 @@ def test_health_and_default_state():
     assert state["pending_action_count"] == 0
 
 
+def test_health_reports_var_lib_context_database_as_persistent(tmp_path):
+    settings = Settings(
+        context_db_path=Path("/var/lib/smartdesk/context.sqlite3"),
+        rfid_registry_path=tmp_path / "rfid-users.json",
+    )
+    client = TestClient(create_app(settings))
+    assert client.get("/api/health").json()["persistent_storage"] is True
+
+
 def test_control_token_protects_public_mutations():
     client = make_client(control_token="secret-token")
 

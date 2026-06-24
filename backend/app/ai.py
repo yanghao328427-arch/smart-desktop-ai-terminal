@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import json
 import re
 from typing import Any
@@ -181,7 +181,7 @@ def parse_rss_items(xml_text_value: str, source: str, limit: int = 5) -> list[Ne
 
 
 def format_news_context(items: list[NewsItem]) -> str:
-    fetched_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     if not items:
         return (
             "新闻检索结果：当前没有成功获取到公开新闻条目。"

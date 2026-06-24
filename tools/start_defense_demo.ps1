@@ -18,7 +18,8 @@ $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $Python = (Get-Command python -ErrorAction Stop).Source
-$BaseUrl = "https://yh001399-smart-desktop-ai-terminal.hf.space"
+$BaseUrl = "https://8-163-38-158.sslip.io"
+$RelayUpstream = "http://8.163.38.158"
 $LocalPreviewUrl = "http://127.0.0.1:8083/console"
 $DeviceId = "desktop-agent-001"
 $RelayPort = 8091
@@ -52,7 +53,24 @@ function Test-HybridRelay {
     }
     try {
         $health = Invoke-RestMethod "http://127.0.0.1:$RelayPort/relay/health" -TimeoutSec 2
-        return $health.status -eq "ok" -and $health.mode -eq "http+websocket"
+        return (
+            $health.status -eq "ok" -and
+            $health.mode -eq "http+websocket" -and
+            $health.upstream -eq $RelayUpstream
+        )
+    } catch {
+        return $false
+    }
+}
+
+function Test-PublicDeviceFresh {
+    try {
+        $state = Invoke-RestMethod "$RelayUpstream/api/state/$DeviceId" -TimeoutSec 5
+        return (
+            $state.online -eq $true -and
+            $null -ne $state.device_age_seconds -and
+            [double]$state.device_age_seconds -le 20
+        )
     } catch {
         return $false
     }
@@ -162,6 +180,10 @@ function Configure-Esp32Hotspot {
 }
 
 function Start-RelayIfMissing {
+    if (Test-PublicDeviceFresh) {
+        Write-Host "[relay] ESP32 is already connected directly to Aliyun ECS; local relay is not needed."
+        return
+    }
     if (Test-RelayListening) {
         if (Test-HybridRelay) {
             Write-Host "[relay] Existing HTTP+WebSocket relay found on port $RelayPort; keeping it."
@@ -175,7 +197,12 @@ function Start-RelayIfMissing {
     $relayScript = Join-Path $PSScriptRoot "esp32_hf_relay.py"
     $relayStartOptions = @{
         FilePath = $Python
-        ArgumentList = Join-ProcessArguments @("-u", $relayScript, "--host", "0.0.0.0", "--port", "$RelayPort")
+        ArgumentList = Join-ProcessArguments @(
+            "-u", $relayScript,
+            "--host", "0.0.0.0",
+            "--port", "$RelayPort",
+            "--upstream", $RelayUpstream
+        )
         WorkingDirectory = $ProjectRoot
         RedirectStandardOutput = $RelayStdout
         RedirectStandardError = $stderr
@@ -201,9 +228,13 @@ function Wait-ForReadiness {
     }
 
     $deadline = (Get-Date).AddSeconds($ReadyWaitSeconds)
-    $lanAddress = Get-PreferredLanAddress
-    if ($lanAddress) {
-        Write-Host "[relay] Current ESP32 server URL: http://${lanAddress}:$RelayPort"
+    if (Test-PublicDeviceFresh) {
+        Write-Host "[device] ESP32 direct backend: $RelayUpstream"
+    } else {
+        $lanAddress = Get-PreferredLanAddress
+        if ($lanAddress) {
+            Write-Host "[relay] Fallback ESP32 server URL: http://${lanAddress}:$RelayPort"
+        }
     }
     $repairAttempted = $false
     do {
@@ -321,10 +352,10 @@ if (-not $NoBrowser) {
     } else {
         Start-Process "$BaseUrl/console"
         Write-Host "[web] Requested opening the public console: $BaseUrl/console"
-        Write-Host "[web] Note: local frontend edits only appear on this public URL after deploying to Hugging Face."
+        Write-Host "[web] Public console is served by the Aliyun ECS backend."
         Write-Host "[web] For local UI preview now, run: .\tools\start_defense_demo.cmd -LocalPreview"
     }
 }
 
 Start-VoiceFrontend
-Write-Host "[demo] Startup complete: web and mini-program share Hugging Face state; voice uses the laptop mic frontend."
+Write-Host "[demo] Startup complete: the public backend is Aliyun ECS; voice uses the laptop mic frontend."

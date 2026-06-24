@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -283,7 +283,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         audio_dir.mkdir(parents=True, exist_ok=True)
         suffix = Path(filename or "audio.wav").suffix or ".wav"
         safe_suffix = suffix if len(suffix) <= 8 else ".wav"
-        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         audio_path = audio_dir / f"{stamp}-{uuid4().hex[:10]}{safe_suffix}"
         audio_path.write_bytes(content)
 
@@ -355,7 +355,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         configured_provider = settings.ai_provider.lower()
         cloud_ready = configured_provider == "dashscope_openai" and bool(settings.dashscope_api_key)
         provider = "dashscope_openai" if cloud_ready else "mock"
-        persistent_storage = settings.context_db_path.is_relative_to(Path("/data"))
+        persistent_storage = any(
+            settings.context_db_path.is_relative_to(root)
+            for root in (Path("/data"), Path("/var/lib"))
+        )
         return HealthResponse(
             status="ok",
             protocol=settings.protocol,
