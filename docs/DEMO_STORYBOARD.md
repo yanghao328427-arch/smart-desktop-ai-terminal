@@ -18,7 +18,7 @@ python .\tools\realtime_readiness_check.py
 
 检查脚本只读取 `/api/health`、`/api/state/{device_id}` 和 `/api/realtime/diagnostics/{device_id}`；它不发送聊天、动作或 ACK。输出 `"verdict": "PASS"` 后再开始正式演示。若为 `FAIL`，先查看 `failed_checks`，不要用旧快照冒充实时数据。
 
-若被问到为什么同时接入 Hugging Face 与华为云，可直接说明：Hugging Face 是本次演示的应用云端主链，负责 AI、Web/小程序接口、状态和 ACK；华为云 IoTDA 是 ESP32 的并行 MQTT 设备云扩展，不是页面数据的中转站；华为云 CCI 只是答辩后的可选迁移方案。
+若被问到云端部署，可直接说明：阿里云 ECS 是本次演示的正式应用云端主链，负责 AI、Web/小程序接口、状态和 ACK；Hugging Face 仅保留旧版本备份；华为云 IoTDA 是可选的并行 MQTT 设备云扩展，不是当前页面数据的中转站。
 
 ## 一键启动整套答辩链路
 
@@ -30,7 +30,7 @@ python .\tools\realtime_readiness_check.py
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start_defense_demo.ps1
 ```
 
-启动器会按顺序：保留已运行的 relay（缺失时才启动一份）→ 等待只读 P0 自检通过 → 打开 Hugging Face 网页控制台 → 经确认后在独立窗口启动笔记本麦克风的持续语音监听。它不修改电脑网络、VPN、DNS、路由或防火墙，也不会自动发送聊天、硬件动作或 ACK。
+启动器会按顺序：优先确认 ESP32 已直连阿里云 ECS（只有直连不新鲜时才启动 relay 兜底）→ 等待只读 P0 自检通过 → 打开 ECS 网页控制台 → 经确认后在独立窗口启动笔记本麦克风的持续语音监听。它不修改电脑网络、VPN、DNS、路由或防火墙，也不会自动发送聊天、硬件动作或 ACK。
 
 - 默认语音模式是持续监听器，使用当前已验证的麦克风设备 `1`；用 `-InputDevice 9` 等参数可临时切换录音设备。
 - 若想使用短窗口的“唤醒词 → 指令录音”流程，运行 `.\tools\start_defense_demo.cmd -VoiceMode wakeword`。
@@ -45,7 +45,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start_defense_demo.p
 
 操作：
 
-1. 保持 ESP32 已供电、本机 relay 已运行；不改电脑网络、VPN、DNS、路由或防火墙。
+1. 保持 ESP32 已供电并直连 ECS；本机 relay 只作为自动兜底，不要求预先运行。不要改电脑网络、VPN、DNS、路由或防火墙。
 2. 若刚重新插入或重启 ESP32，先等待其完成 Wi-Fi 与 UART 保活启动（现场预留 1—3 分钟）；不要在刚上电时把暂时的 `uart_ok=false` 当作最终故障。
 3. 运行 `python .\tools\realtime_readiness_check.py`。
 4. 展示 `PASS`、云端模型、最近上报时间和传感器字段，然后打开 Web 控制台与微信体验版。
@@ -53,7 +53,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start_defense_demo.p
 讲解点：
 
 - 先证明“此刻有真实上报”，再展示界面，避免把历史缓存当作实时数据。
-- 网页和小程序读取同一条 Hugging Face 云端状态链路；两端数值应同步变化。
+- 网页和小程序读取同一条阿里云 ECS 状态链路；两端数值应同步变化。
 - “30 秒自检”是脚本执行和判读时间；ESP32 刚上电的启动等待不计入这 30 秒。
 
 ### 1. 四层架构说明

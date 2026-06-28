@@ -38,6 +38,15 @@ WS /api/realtime/ws?device_id=desktop-agent-001&edge_id=esp32s3-sense-001
 {"type":"state","state":"idle"}
 ```
 
+传输职责：
+
+- WebSocket 在线时，实时对话状态、按钮事件、STM32 命令下发和 STM32 ACK 优先走该连接。
+- 中国境内答辩主链为 `ESP32S3 -> ws://答辩电脑:8091 -> 本机 relay -> wss://Hugging Face`；ESP32 无需直接访问 Hugging Face。
+- WebSocket 断开时，ESP32S3 每 10 秒恢复一次 HTTP 命令轮询；按钮和 ACK 使用对应 HTTP 接口兜底，WSS 每 30 秒尝试重连。
+- 心跳、遥测、RFID、音频上传、用户上下文和常规业务接口继续使用 HTTP/HTTPS。
+- 公网 heartbeat 最短间隔 15 秒，telemetry 最短间隔 10 秒；网页和小程序状态轮询为 30 秒，实时事件仍通过 WebSocket 到达。
+- ESP32S3 与 STM32 之间始终使用 UART，不受公网传输切换影响。
+
 ## 后端 HTTP
 
 | 方法 | 路径 | 作用 |
@@ -46,8 +55,8 @@ WS /api/realtime/ws?device_id=desktop-agent-001&edge_id=esp32s3-sense-001
 | `GET` | `/api/state/{device_id}` | 设备状态 |
 | `POST` | `/api/hardware/telemetry` | STM32/ESP32 上传传感器状态 |
 | `POST` | `/api/hardware/heartbeat` | ESP32S3 上传在线与 UART 状态 |
-| `GET` | `/api/hardware/commands/{device_id}` | 旧式轮询调试命令 |
-| `POST` | `/api/hardware/ack` | 确认动作执行 |
+| `GET` | `/api/hardware/commands/{device_id}` | WebSocket 断线时的命令轮询兜底 |
+| `POST` | `/api/hardware/ack` | WebSocket 不可用时确认动作执行 |
 | `POST` | `/api/hardware/button` | ESP32S3 备用上报 STM32 `BT:BTN:*` 按钮事件 |
 | `GET` | `/api/users` | 列出 SQLite 中的 RFID 用户；需要 `X-Demo-Token` |
 | `POST` | `/api/users` | 创建无卡用户上下文；需要 `X-Demo-Token` |
@@ -126,6 +135,8 @@ BT:LOCK:OFF
 ```
 
 按钮语义：`KEY1/PB12` 在 OLED 主状态和信息副屏之间切换，长按回主屏；`KEY2/PB13` 按下即打断当前播报，超过约 600ms 后进入电脑麦克风 PTT 录音，松开立即上传。
+
+收到 `NET:UI:USER:<user_id>:<uid>:<mode>` 后，STM32 会自动切换到 `USER CONTEXT` 副屏，显示 `ID`、`CARD` 和 `MODE`；仍可使用 KEY1 切换其它页面。
 
 调试时仍允许直接发：
 

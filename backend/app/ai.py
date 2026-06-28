@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import json
 import re
 from typing import Any
@@ -28,7 +28,7 @@ class NewsItem:
     source: str
 
 
-SPEECH_MAX_BYTES = 90
+SPEECH_MAX_BYTES = 180
 NEWS_RSS_FEEDS = [
     ("BBC World", "https://feeds.bbci.co.uk/news/world/rss.xml"),
     ("BBC Top Stories", "https://feeds.bbci.co.uk/news/rss.xml"),
@@ -181,7 +181,7 @@ def parse_rss_items(xml_text_value: str, source: str, limit: int = 5) -> list[Ne
 
 
 def format_news_context(items: list[NewsItem]) -> str:
-    fetched_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     if not items:
         return (
             "新闻检索结果：当前没有成功获取到公开新闻条目。"
@@ -388,7 +388,7 @@ def build_system_prompt(device: DeviceSnapshot, *, has_news_context: bool = Fals
         "你必须只输出一个 JSON 对象，不要输出 Markdown、代码块或额外说明。"
         'JSON 格式固定为 {"reply":"...","speech":"..."}。'
         "reply 给网页和小程序显示：短问题可以短答，复杂问题可以给较完整的中文答案，允许使用换行、编号和要点。"
-        "speech 给 SYN6288 播报，必须更短，只保留一条口语短句，尽量不超过 30 个汉字。"
+        "speech 给 SYN6288 播报，必须更短，使用 1 到 3 句完整、自然的口语短句；每句尽量不超过 18 个汉字，句间必须使用中文标点。"
     )
     if has_news_context:
         identity += (

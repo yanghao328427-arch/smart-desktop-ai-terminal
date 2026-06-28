@@ -36,28 +36,16 @@ from laptop_mic_sidecar import (
 
 DEFAULT_INPUT_DEVICE = "1"
 DEFAULT_SOURCE = "laptop_realtime_listener"
-DEFAULT_WAKE_PHRASES = ["灵宝灵宝", "你好灵宝", "在吗灵宝"]
+DEFAULT_WAKE_PHRASES = ["你好小鑫"]
 DEFAULT_WAKE_ALIASES = [
-    "灵宝你好",
-    "灵宝在吗",
-    "你好小灵宝",
-    "小灵宝小灵宝",
-    "小灵宝",
-    "玲宝玲宝",
-    "你好玲宝",
-    "凌宝凌宝",
-    "你好凌宝",
-    "林宝林宝",
-    "你好林宝",
-    "灵保灵保",
-    "你好灵保",
-    "灵堡灵堡",
-    "你好灵堡",
-    "零宝零宝",
-    "你好零宝",
+    "你好小新",
+    "你好小心",
+    "你好小欣",
+    "小鑫小鑫",
+    "小鑫",
 ]
-DEFAULT_STOP_PHRASES = ["再见灵宝", "再见再见"]
-DEFAULT_STOP_ALIASES = ["灵宝再见", "拜拜灵宝", "结束对话", "先这样吧"]
+DEFAULT_STOP_PHRASES = ["再见小鑫", "再见再见"]
+DEFAULT_STOP_ALIASES = ["小鑫再见", "拜拜小鑫", "结束对话", "先这样吧"]
 _LOCK_HANDLE: Any | None = None
 _BACKEND_PROCESS: subprocess.Popen[bytes] | None = None
 
@@ -92,13 +80,15 @@ def clear_screen(enabled: bool) -> None:
 
 def acquire_single_instance_lock() -> bool:
     global _LOCK_HANDLE
-    lock_path = Path(".tmp") / "laptop_realtime_listener.lock"
+    lock_root = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "SmartDeskAI"
+    lock_path = lock_root / "laptop_realtime_listener.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     handle = lock_path.open("a+b")
     try:
         if os.name == "nt":
             import msvcrt
 
+            handle.seek(0)
             msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
         else:
             import fcntl
@@ -166,7 +156,12 @@ def locate_project_root(args: argparse.Namespace) -> Path | None:
 
 def backend_python_candidates(args: argparse.Namespace) -> list[list[str]]:
     candidates: list[list[str]] = []
-    explicit = args.backend_python or os.environ.get("LINGBAO_BACKEND_PYTHON") or os.environ.get("PYTHON")
+    explicit = (
+        args.backend_python
+        or os.environ.get("SMARTDESK_BACKEND_PYTHON")
+        or os.environ.get("LINGBAO_BACKEND_PYTHON")
+        or os.environ.get("PYTHON")
+    )
     if explicit:
         candidates.append([explicit])
 
@@ -333,7 +328,7 @@ def render_status(args: argparse.Namespace, status: RuntimeStatus, *, clear: boo
     wake_alias_count = max(0, len(getattr(args, "wake_match_phrase", args.wake_phrase)) - len(args.wake_phrase))
     stop_alias_count = max(0, len(getattr(args, "stop_match_phrase", args.stop_phrase)) - len(args.stop_phrase))
     lines = [
-        "Lingbao Voice Console",
+        "Xiaoxin Voice Console",
         "=" * 22,
         f"script: ONLINE",
         f"state: {status.state}",
@@ -342,6 +337,7 @@ def render_status(args: argparse.Namespace, status: RuntimeStatus, *, clear: boo
         f"device: {status.device_summary}",
         f"pending actions: {status.pending_action_count}",
         f"input mode: {args.input_mode}",
+        f"ptt trigger: {args.ptt_port or 'backend diagnostics'}" if args.input_mode == "ptt" else "ptt trigger: n/a",
         f"audio input: READY, sample-rate={args.sample_rate}, channels={args.channels}",
         (
             "voice detector: "
@@ -405,7 +401,7 @@ def wait_until_backend_idle(args: argparse.Namespace, status: RuntimeStatus) -> 
         time.sleep(max(0.1, args.status_interval_seconds))
 
 
-def latest_button_event(args: argparse.Namespace, status: RuntimeStatus) -> tuple[int, str]:
+def button_events_since(args: argparse.Namespace, status: RuntimeStatus, after_seq: int) -> tuple[int, list[tuple[int, str]]]:
     diag = diagnostics(args.base_url, args.device_id)
     state = diag.get("state") or {}
     sensors = state.get("sensors") or {}
@@ -414,7 +410,20 @@ def latest_button_event(args: argparse.Namespace, status: RuntimeStatus) -> tupl
     seq = int(sensors.get("last_button_seq") or 0)
     if line:
         status.last_feedback = line
-    return seq, line
+    events: list[tuple[int, str]] = []
+    for item in sensors.get("recent_button_events") or []:
+        try:
+            event_seq = int(item.get("seq") or 0)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        event_line = str(item.get("line") or "")
+        if event_seq > after_seq and event_line:
+            events.append((event_seq, event_line))
+
+    if not events and seq > after_seq and line:
+        events.append((seq, line))
+    events.sort(key=lambda item: item[0])
+    return seq, events
 
 
 def pcm_rms(raw_pcm: bytes) -> float:
@@ -797,7 +806,102 @@ def listen_for_utterance(args: argparse.Namespace, status: RuntimeStatus) -> tup
                 return bytes(audio), stats
 
 
+def read_key2_serial_line(port: Any) -> str:
+    raw = port.readline()
+    return raw.decode("utf-8", errors="replace").strip() if raw else ""
+
+
+def listen_for_ptt_utterance_from_serial(args: argparse.Namespace, status: RuntimeStatus) -> tuple[bytes, dict[str, Any]]:
+    try:
+        import serial
+        import sounddevice as sd
+    except ImportError as exc:
+        raise RuntimeError("PTT serial mode requires pyserial and sounddevice.") from exc
+
+    block_frames = max(1, int(args.sample_rate * args.block_ms / 1000))
+    max_blocks = max(1, int(args.max_record_seconds * 1000 / args.block_ms))
+    port_name = args.ptt_port.strip()
+    try:
+        port = serial.Serial(port_name, args.ptt_baud, timeout=0.05)
+    except serial.SerialException as exc:
+        raise RuntimeError(f"cannot open PTT serial port {port_name}: {exc}") from exc
+
+    try:
+        if args.ptt_serial_open_delay > 0:
+            time.sleep(args.ptt_serial_open_delay)
+        status.state = "WAIT_KEY2_HOLD"
+        status.last_error = ""
+        set_status_light(args, status, "blue", "ptt_wait")
+        render_status(args, status)
+
+        last_render = 0.0
+        while True:
+            line = read_key2_serial_line(port)
+            if line:
+                status.last_feedback = line
+                if "KEY2:HOLD_START" in line:
+                    print("[ptt] KEY2 hold detected on COM7; laptop microphone recording started.", flush=True)
+                    break
+            now = time.monotonic()
+            if now - last_render >= args.status_interval_seconds:
+                render_status(args, status)
+                last_render = now
+
+        audio = bytearray()
+        recorded_blocks = 0
+        status.state = "PTT_RECORDING"
+        status.conversation_active = True
+        set_status_light(args, status, "blue", "ptt_recording")
+        render_status(args, status)
+
+        with sd.RawInputStream(
+            samplerate=args.sample_rate,
+            channels=args.channels,
+            dtype="int16",
+            device=parse_device(args.input_device),
+            blocksize=block_frames,
+        ) as stream:
+            while True:
+                block, overflowed = stream.read(block_frames)
+                audio.extend(bytes(block))
+                recorded_blocks += 1
+                status.current_rms = pcm_rms(bytes(block))
+                if overflowed:
+                    status.last_error = "audio input overflow"
+
+                while True:
+                    line = read_key2_serial_line(port)
+                    if not line:
+                        break
+                    status.last_feedback = line
+                    if "KEY2:UP" in line:
+                        print("[ptt] KEY2 released; laptop recording stopped and ASR upload starts now.", flush=True)
+                        break
+                    if "KEY2:SHORT" in line:
+                        audio.clear()
+                        status.state = "PTT_CANCELLED"
+                        render_status(args, status)
+                        return listen_for_ptt_utterance_from_serial(args, status)
+                if "KEY2:UP" in line:
+                    break
+                if recorded_blocks >= max_blocks:
+                    status.last_error = "PTT max record duration reached"
+                    break
+    finally:
+        port.close()
+
+    if not audio:
+        raise RuntimeError("PTT recording ended without audio")
+    stats_path = output_path(args.source, status.turn_count + 1)
+    save_wav(stats_path, bytes(audio), sample_rate=args.sample_rate, channels=args.channels)
+    stats = audio_stats(bytes(audio), sample_rate=args.sample_rate, channels=args.channels, path=stats_path)
+    return bytes(audio), stats
+
+
 def listen_for_ptt_utterance(args: argparse.Namespace, status: RuntimeStatus) -> tuple[bytes, dict[str, Any]]:
+    if args.ptt_port:
+        return listen_for_ptt_utterance_from_serial(args, status)
+
     try:
         import sounddevice as sd
     except ImportError as exc:
@@ -807,18 +911,26 @@ def listen_for_ptt_utterance(args: argparse.Namespace, status: RuntimeStatus) ->
     max_blocks = max(1, int(args.max_record_seconds * 1000 / args.block_ms))
     poll_seconds = max(0.03, float(args.ptt_poll_seconds))
 
-    last_seq, _ = latest_button_event(args, status)
+    last_seq, _ = button_events_since(args, status, 0)
     status.state = "WAIT_KEY2_HOLD"
     set_status_light(args, status, "blue", "ptt_wait")
     render_status(args, status)
 
     last_render = 0.0
     while True:
-        seq, line = latest_button_event(args, status)
-        if seq != last_seq:
-            last_seq = seq
-            if "KEY2:HOLD_START" in line:
-                break
+        seq, events = button_events_since(args, status, last_seq)
+        last_seq = max(last_seq, seq)
+        for index, (_, line) in enumerate(events):
+            if "KEY2:HOLD_START" not in line:
+                continue
+            if any("KEY2:UP" in later_line for _, later_line in events[index + 1 :]):
+                status.last_error = "KEY2 hold finished before laptop recording started; hold again."
+                continue
+            break
+        else:
+            line = ""
+        if "KEY2:HOLD_START" in line and not any("KEY2:UP" in later_line for _, later_line in events[index + 1 :]):
+            break
         status.state = "WAIT_KEY2_HOLD"
         now = time.monotonic()
         if now - last_render >= args.status_interval_seconds:
@@ -852,10 +964,10 @@ def listen_for_ptt_utterance(args: argparse.Namespace, status: RuntimeStatus) ->
 
             now = time.monotonic()
             if now - last_poll >= poll_seconds:
-                seq, line = latest_button_event(args, status)
+                seq, events = button_events_since(args, status, last_seq)
                 last_poll = now
-                if seq != last_seq:
-                    last_seq = seq
+                last_seq = max(last_seq, seq)
+                for _, line in events:
                     if "KEY2:UP" in line:
                         break
                     if "KEY2:SHORT" in line:
@@ -863,6 +975,10 @@ def listen_for_ptt_utterance(args: argparse.Namespace, status: RuntimeStatus) ->
                         status.state = "PTT_CANCELLED"
                         render_status(args, status)
                         return listen_for_ptt_utterance(args, status)
+                else:
+                    line = ""
+                if "KEY2:UP" in line:
+                    break
                 if now - last_render >= args.status_interval_seconds:
                     render_status(args, status)
                     last_render = now
@@ -1038,7 +1154,7 @@ def run_turn(args: argparse.Namespace, status: RuntimeStatus, audio: bytes, stat
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Lingbao manual realtime listener. It uses VAD to capture each spoken utterance "
+            "Xiaoxin manual realtime listener. It uses VAD to capture each spoken utterance "
             "silently, uploads it to /api/asr/transcribe with inject=false for ASR and echo "
             "filtering, injects non-echo recognized text into Qwen, waits for ESP32S3/STM32 ACK, "
             "then returns to listening for continuous dialogue."
@@ -1059,6 +1175,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source", default=DEFAULT_SOURCE)
     parser.add_argument("--input-mode", choices=["vad", "ptt"], default="vad")
     parser.add_argument("--ptt-poll-seconds", type=float, default=0.08)
+    parser.add_argument("--ptt-port", default="COM7", help="Local STM32 serial port for low-latency KEY2 PTT. Empty uses backend diagnostics.")
+    parser.add_argument("--ptt-baud", type=int, default=115200)
+    parser.add_argument("--ptt-serial-open-delay", type=float, default=0.1)
     parser.add_argument("--wake-phrase", action="append", default=[], help="Wake phrase. Repeatable.")
     parser.add_argument("--stop-phrase", action="append", default=[], help="Stop phrase. Repeatable.")
     parser.add_argument("--wake-alias", action="append", default=[], help="Extra wake phrase alias. Repeatable.")
@@ -1126,7 +1245,7 @@ def main() -> int:
         print("ERROR: RMS thresholds must be positive.", file=sys.stderr)
         return 2
     if not acquire_single_instance_lock():
-        print("ERROR: another Lingbao realtime listener is already running. Close it before starting a new one.", file=sys.stderr)
+        print("ERROR: another Xiaoxin realtime listener is already running. Close it before starting a new one.", file=sys.stderr)
         try:
             input("Press Enter to close...")
         except EOFError:

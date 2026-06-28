@@ -75,6 +75,13 @@ python tools/configure_esp32.py --port COM8 --server https://yh001399-smart-desk
 ## 注意事项
 
 - Hugging Face 免费 Space 会休眠，第一次打开可能需要等待冷启动。
-- 免费环境文件系统不是长期持久存储，SQLite 上下文库和上传音频重启后可能丢失；长期演示可以接数据库或持久存储。
+- 默认容器文件系统不是长期持久存储。正式配置应给 Space 挂载读写 Storage Bucket 到 `/data`，并设置：
+
+```text
+CONTEXT_DB_PATH=/data/context.sqlite3
+RFID_REGISTRY_PATH=/data/rfid_users.json
+```
+
+- `/api/health` 返回 `persistent_storage=true` 表示后端已使用 `/data` 下的上下文数据库路径；仍应同时确认 Space Settings 中存在 Bucket 挂载。
 - 设备侧心跳/遥测接口目前保留无口令，以兼容现有 ESP32/STM32 实时链路；真实 RFID 刷卡可以用 `DEVICE_TOKEN`，控制口令继续用于管理和跨用户访问。
 - `DASHSCOPE_API_KEY` 没设置前，`/api/health` 会显示 `cloud_ready=false`，AI/ASR 会降级；这不是假数据，而是明确的未配置状态。

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 import time
 import uuid
@@ -29,9 +30,31 @@ def configure_text_output() -> None:
                 pass
 
 
+def control_token() -> str:
+    configured = os.environ.get("CONTROL_TOKEN", "").strip()
+    if configured:
+        return configured
+    env_path = Path(__file__).resolve().parents[1] / "backend" / ".env"
+    if not env_path.exists():
+        return ""
+    for raw_line in env_path.read_text(encoding="utf-8-sig").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() == "CONTROL_TOKEN":
+            return value.strip().strip("'\"")
+    return ""
+
+
+def auth_headers() -> dict[str, str]:
+    token = control_token()
+    return {"X-Demo-Token": token} if token else {}
+
+
 def request_json(method: str, url: str, payload: dict[str, Any] | None = None, timeout: float = 20.0) -> dict[str, Any]:
     data = None
-    headers = {"Accept": "application/json"}
+    headers = {"Accept": "application/json", **auth_headers()}
     if payload is not None:
         headers["Content-Type"] = "application/json"
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -102,7 +125,7 @@ def post_wav(
     request = Request(
         f"{base_url.rstrip('/')}/api/asr/transcribe",
         data=body,
-        headers={"Content-Type": content_type, "Accept": "application/json"},
+        headers={"Content-Type": content_type, "Accept": "application/json", **auth_headers()},
         method="POST",
     )
     with urlopen(request, timeout=120) as response:

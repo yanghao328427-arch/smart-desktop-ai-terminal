@@ -7,7 +7,7 @@
   Web 控制台 / 微信小程序 / 答辩演示页
 
 平台层
-  Hugging Face 部署的 FastAPI 后端 / 设备状态 / RFID 用户 / DashScope AI / 工具调用 / 诊断
+  阿里云 ECS 部署的 FastAPI 后端 / 设备状态 / RFID 用户 / DashScope AI / 工具调用 / 诊断
 
 网络层
   ESP32S3 Wi-Fi / 本机 HTTP relay / HTTPS 公网后端 / UART 到 STM32 / 本地 USB 调试
@@ -22,24 +22,37 @@
 Web 控制台 / 微信小程序
     | HTTPS / WSS
     v
-Hugging Face：FastAPI + DashScope AI + 实时状态 / 指令 / ACK
+阿里云 ECS：FastAPI + DashScope AI + 实时状态 / 指令 / ACK
     ^                                        |
-    | HTTPS（本机 relay 转发）                 | GET commands / POST ACK
+    | HTTP / WebSocket 国内公网直连             | commands / ACK
     |                                        v
-本机 ESP32 relay :8091  <--- Wi-Fi --->  ESP32S3 Sense  <--- UART --->  STM32 / 传感器 / 执行器
+ESP32S3 Sense  <-------------------- UART -------------------->  STM32 / 传感器 / 执行器
 ```
 
-ESP32 当前通过 HTTP relay 上报 heartbeat、遥测与 ACK，并轮询待执行指令；因此 `session_connected=false` 不等于设备离线。网页和小程序都只读取 Hugging Face 的状态接口，展示的是同一台 `desktop-agent-001` 设备的云端快照。
+ESP32 当前直接连接阿里云 ECS，上报 heartbeat、遥测与 ACK；WebSocket断开时仍可轮询待执行指令。`session_connected=false` 不等于设备离线，HTTP硬件证据仍可维持真实在线状态。
 
-## 双云分工与边界
+## 实验分支目标传输策略
+
+在不删除现有 HTTP 稳定链路的前提下，ESP32S3 固件采用以下优先级：
+
+```text
+HTTP/HTTPS：鉴权、RFID、用户上下文、音频上传、心跳、遥测和状态查询
+WebSocket/WSS：实时对话状态、按钮事件、STM32 命令下发和 ACK
+UART：ESP32S3 与 STM32 之间的命令执行和物理回执
+```
+
+WebSocket 在线时不再轮询 HTTP 命令接口；WebSocket 断开后自动恢复 HTTP 命令轮询，按钮和 ACK 也退回 HTTP。ESP32当前直连阿里云 ECS；本机 `:8091` relay保留为应急路径，启动器仅在公网设备状态不新鲜时启用。
+
+## 云端分工与边界
 
 | 服务 | 角色 | 是否为当前答辩主链必需 |
 | --- | --- | --- |
-| Hugging Face | 部署 FastAPI、调用 DashScope、提供 Web/小程序公网 API、保存实时状态与 ACK | 是 |
+| 阿里云 ECS | 部署 FastAPI、调用DashScope、提供Web API、保存实时状态与ACK | 是 |
+| Hugging Face | 旧公网部署和临时备用，不再作为答辩主链 | 否 |
 | 华为云 IoTDA | ESP32 的可选 MQTT 设备云接入：属性上报与平台命令 | 否，作为平台扩展并行运行 |
-| 华为云 CCI | 未来可替换 Hugging Face 的容器部署方案 | 否，当前未启用 |
+| 华为云 CCI | 早期容器迁移备选方案 | 否，当前未启用 |
 
-IoTDA 是 ESP32 的并行设备云通道，不是“ESP32 → IoTDA → Hugging Face → 页面”的串行中转站。若 IoTDA 不可用，只要 ESP32 → 本机 relay → Hugging Face 正常，当前答辩主链仍可完成；反之，IoTDA 的属性上报不能替代 Web、小程序和 AI 所需的 Hugging Face 后端。
+IoTDA 是 ESP32 的并行设备云通道，不是业务中转站。IoTDA属性上报不能替代Web、AI、用户上下文和ACK所需的ECS后端。
 
 ## 状态机
 

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>智能桌面 AI 终端｜答辩演示讲稿</title>
+  <style>
+    :root { --orange:#ff6b35; --ink:#111; --muted:#666; --panel:#ededed; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:"Microsoft YaHei UI","Microsoft YaHei",sans-serif; color:var(--ink); background:#f5f5f5; }
+    main { max-width:980px; margin:32px auto; background:white; padding:48px 58px; box-shadow:0 8px 28px rgba(0,0,0,.08); }
+    h1 { margin:0; font-size:42px; }
+    h2 { margin-top:42px; padding-bottom:12px; border-bottom:2px solid #bbb; font-size:28px; }
+    h3 { margin:28px 0 8px; font-size:21px; }
+    p, li { font-size:17px; line-height:1.8; }
+    .subtitle { color:var(--muted); font-size:19px; margin-top:12px; }
+    .accent { color:var(--orange); font-weight:700; }
+    .card { background:var(--panel); padding:20px 24px; margin:16px 0; }
+    .say { border-left:5px solid var(--orange); padding:10px 20px; background:#fff1ea; }
+    .steps { counter-reset:step; list-style:none; padding:0; }
+    .steps li { counter-increment:step; margin:16px 0; padding:18px 22px 18px 70px; background:var(--panel); position:relative; }
+    .steps li::before { content:counter(step, decimal-leading-zero); position:absolute; left:20px; color:var(--orange); font-weight:700; }
+    code { background:#eee; padding:3px 7px; border-radius:4px; }
+    @media print { body { background:white; } main { margin:0; box-shadow:none; max-width:none; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>智能桌面 AI 终端</h1>
+  <div class="subtitle">五分钟答辩演示讲稿｜真实感知 · 身份上下文 · 云端 AI · 实体执行 · ACK</div>
+
+  <h2>上台前</h2>
+  <ol class="steps">
+    <li>给 STM32、ESP32S3、传感器和执行器上电，等待 1—3 分钟。</li>
+    <li>双击 <b>启动答辩演示.exe</b>，确认界面中的云端、设备、UART、传感器均显示正常。</li>
+    <li>点击橙色的“<b>一键启动完整演示</b>”。程序会自动打开网页并启动关键词监听。</li>
+    <li>安全设置中输入本次控制口令；口令不要写在 PPT、讲稿或截图中。</li>
+  </ol>
+
+  <h2>正式讲解</h2>
+
+  <h3>1. 开场：先证明是真实系统</h3>
+  <div class="say">大家好，我展示的是一套由 STM32F103、ESP32S3、RFID、真实传感器和语音模块构成的智能桌面 AI 终端。启动器已经完成只读实时检查，当前云端模型、设备在线状态、STM32 UART、传感器新鲜度和动作队列均可演示，因此接下来看到的不是历史截图或预设假数据。</div>
+
+  <h3>2. 四层架构</h3>
+  <div class="say">系统分为四层：STM32 负责真实感知与确定性执行；ESP32S3 负责 Wi-Fi、RFID 和串口桥接；阿里云 ECS 负责 FastAPI、Qwen、ASR、用户上下文和动作调度；应用层提供 Web、小程序和笔记本语音入口。密钥只保存在云端。</div>
+
+  <h3>3. 真实传感器</h3>
+  <div class="card"><b>操作：</b>改变超声波距离或旋转电位器，观察网页数值刷新。</div>
+  <div class="say">这些数据由 STM32 实际采集，经 ESP32S3 上传。没有数据时系统显示未上报；超过 30 秒没有新的硬件证据，会自动判定设备离线，不会拿旧快照冒充实时状态。</div>
+
+  <h3>4. RFID 身份上下文</h3>
+  <div class="card"><b>操作：</b>刷已注册的真实 RC522 卡，观察网页用户、模式和 OLED 改变。</div>
+  <div class="say">RFID 在这里不是装饰性的开锁功能，而是用户上下文入口。真实 UID 会绑定用户、模式、对话记忆和权限；未知卡不会继承上一位用户。网页模拟 UID 只用于调试。</div>
+
+  <h3>5. AI 到硬件的闭环</h3>
+  <div class="card"><b>输入：</b>打开风扇并播报当前温度。</div>
+  <div class="say">自然语言先进入 Qwen，模型结合实时传感器和当前用户上下文生成回答与动作。每个动作都有唯一 action_id，经 ESP32S3 下发给 STM32；STM32 实际执行后返回同一个 ID 的 ACK。只有收到 ACK，我们才把动作称为执行成功。</div>
+
+  <h3>6. 关键词语音</h3>
+  <div class="card"><b>说：</b>“你好小鑫” → 听到“我在” → “现在环境怎么样，请告诉我温度和距离。”</div>
+  <div class="say">语音和文字不是两套演示程序。关键词命中后，笔记本麦克风录制指令，Paraformer 完成识别，然后进入同一条 Qwen、动作规划、STM32 执行与 ACK 链路。当前稳定验收入口是笔记本麦克风；ESP32S3 板载 WakeNet 仍属于隔离实验分支。</div>
+
+  <h3>7. 诊断与收尾</h3>
+  <div class="say">最后可以在诊断页面看到最近动作、ACK 成功数和待执行队列。这个项目的重点不是播放预设语音，而是把真实身份、真实环境、自然语言 AI、实体执行器和可追踪 ACK 连接成一套可验证的智能终端。</div>
+
+  <h2>现场推荐语句</h2>
+  <ul>
+    <li>关键词：<b>你好小鑫</b></li>
+    <li>环境问答：<b>现在环境怎么样，请告诉我温度和距离。</b></li>
+    <li>动作控制：<b>打开风扇并播报当前温度。</b></li>
+    <li>自由问答：<b>你能为桌面环境做什么？</b></li>
+    <li>收尾动作：<b>关闭风扇。</b></li>
+  </ul>
+
+  <h2>故障降级顺序</h2>
+  <ol>
+    <li>语音连续两次未命中：点击“停止语音监听”，立即使用 Web 文本输入。</li>
+    <li>RFID 偶发未读：移开卡片后重新靠近，不把网页模拟 UID 说成真实刷卡。</li>
+    <li>云端模型不可用：明确说明进入规则兜底，不称为 Qwen 实时回复。</li>
+    <li>设备状态未通过：检查硬件供电和 Wi-Fi，不在答辩现场修改 VPN、DNS、路由、防火墙或安全组。</li>
+  </ol>
+
+  <p class="accent">禁止表述：板载麦克风已经稳定验收；命令发出就等于执行成功；模拟 RFID 就是真实刷卡；缓存状态就是实时设备状态。</p>
+</main>
+</body>
+</html>

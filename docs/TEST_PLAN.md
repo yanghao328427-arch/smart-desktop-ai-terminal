@@ -10,6 +10,12 @@ python -m pytest -q
 验收：
 
 - WebSocket 能完成 `wake -> text -> assistant -> stm32/commands -> idle`。
+- WebSocket 在线时，STM32 ACK 通过 WebSocket 返回并更新 `ack_ok_count`。
+- WebSocket 断开后，ESP32S3 恢复 `/api/hardware/commands/{device_id}` 轮询，ACK 自动退回 `/api/hardware/ack`。
+- 本机 relay 的 `/relay/health` 返回 `mode=http+websocket`，ESP32 连接本机 `ws://:8091` 后由电脑桥接到 Hugging Face WSS。
+- Hugging Face 返回 429 后，relay 进入本地冷却并停止继续请求上游；ESP32 仍按 10 秒 HTTP 兜底和 30 秒 WSS 重连节奏运行。
+- 无用户上下文时，可从 ESP32 USB 串口发送 `CFG:WS:WAKE`，验证真实 WSS 命令下发与 STM32 ACK。
+- 实体卡授权后，OLED 自动切到 `USER CONTEXT`，显示用户 ID、卡号和模式。
 - 动作能转换成 `NET:CMD:<id>:NET:*`。
 - RFID 在线注册能把真实 RC522 下一次刷卡绑定到 SQLite 用户上下文。
 - 课程要求清单存在并覆盖四层架构。
@@ -18,7 +24,7 @@ python -m pytest -q
 
 ```powershell
 cd "D:\HuaweiMoveData\Users\35267\Documents\New project2"
-python .\tools\cloud_dialogue_smoke.py --base-url http://127.0.0.1:8083
+python .\tools\cloud_dialogue_smoke.py --require-cloud
 ```
 
 验收：
@@ -26,6 +32,7 @@ python .\tools\cloud_dialogue_smoke.py --base-url http://127.0.0.1:8083
 - 输出 `cloud_ready=true`、`ai_provider=dashscope_openai`、`ai_model=qwen-plus`。
 - 三轮对话均有 `reply`，并产生 `tts_speak` / `oled_display` 等动作。
 - 输出不包含 DashScope API Key。
+- 工具会静默读取本地受保护的 `CONTROL_TOKEN` 并只放入请求头，不输出口令。
 - 如果 `cloud_ready=false`，说明后端仍在本地规则兜底；硬件可演示，但答辩时不能宣称已经走真实云端模型。
 - 答辩前强制云端验收可追加 `--require-cloud`，此时 `cloud_ready=false` 会返回非零退出码。
 

@@ -21,7 +21,7 @@ from app.actions import command_from_action
 from app.config import Settings
 from app.main import create_app, rfid_access_speech, rfid_spoken_name
 from app.schemas import ActionSpec
-from app.store import DEVICE_ONLINE_TTL_SECONDS, now_utc
+from app.store import DEVICE_ONLINE_TTL_SECONDS, RFID_PHYSICAL_CONTEXT_TTL_SECONDS, now_utc
 
 
 def make_client(**settings_overrides) -> TestClient:
@@ -82,6 +82,7 @@ def test_health_and_default_state():
     assert health["ai_provider"] == "mock"
     assert health["ai_model"] == "local-rules"
     assert health["cloud_ready"] is False
+    assert health["persistent_storage"] is False
 
     state = client.get("/api/state/desktop-agent-001").json()
     assert state["device_id"] == "desktop-agent-001"
@@ -89,9 +90,21 @@ def test_health_and_default_state():
     assert state["pending_action_count"] == 0
 
 
+def test_health_reports_var_lib_context_database_as_persistent(tmp_path):
+    settings = Settings(
+        context_db_path=Path("/var/lib/smartdesk/context.sqlite3"),
+        rfid_registry_path=tmp_path / "rfid-users.json",
+    )
+    client = TestClient(create_app(settings))
+    assert client.get("/api/health").json()["persistent_storage"] is True
+
+
 def test_control_token_protects_public_mutations():
     client = make_client(control_token="secret-token")
 
+    verify_blocked = client.post("/api/auth/verify")
+    verify_wrong = client.post("/api/auth/verify", headers={"X-Demo-Token": "wrong"})
+    verify_allowed = client.post("/api/auth/verify", headers={"X-Demo-Token": "secret-token"})
     blocked = client.post("/api/chat", json={"text": "你是谁"})
     wrong = client.post("/api/chat", headers={"X-Demo-Token": "wrong"}, json={"text": "你是谁"})
     allowed = client.post("/api/chat", headers={"X-Demo-Token": "secret-token"}, json={"text": "你是谁"})
@@ -102,6 +115,10 @@ def test_control_token_protects_public_mutations():
         json={"uid": "04A1B2C3", "source": "web_simulator"},
     )
 
+    assert verify_blocked.status_code == 401
+    assert verify_wrong.status_code == 401
+    assert verify_allowed.status_code == 200
+    assert verify_allowed.json() == {"ok": True, "role": "administrator"}
     assert blocked.status_code == 403
     assert wrong.status_code == 401
     assert allowed.status_code == 200
@@ -161,7 +178,7 @@ def test_tts_hex_command_limits_utf8_payload_bytes():
     command = command_from_action(ActionSpec(type="tts_speak", payload={"text": "智能对话" * 80}))
     hex_payload = command.removeprefix("NET:TTSHEX:")
 
-    assert len(bytes.fromhex(hex_payload)) <= 120
+    assert len(bytes.fromhex(hex_payload)) <= 90
 
 
 def test_cloud_reply_parser_prefers_structured_speech():
@@ -177,7 +194,7 @@ def test_speech_text_keeps_broadcast_sentence_short():
     speech = speech_text("当前设备在线。实时会话已连接。串口链路正常。温度 26.5 度，湿度 48.2%。距离数据暂时不可用。")
 
     assert speech.startswith("当前设备在线")
-    assert len(speech.encode("utf-8")) <= 90
+    assert len(speech.encode("utf-8")) <= 180
 
 
 def test_news_query_detection_and_rss_context_formatting():
@@ -259,7 +276,7 @@ def test_rfid_scan_unlocks_registered_card_and_rejects_unknown_card():
     assert any(":NET:OLED:STUDY MODE" in line for line in accepted["commands"])
     assert any(":NET:TTSHEX:" in line for line in accepted["commands"])
     tts_command = next(line.split(":NET:TTSHEX:", 1)[1] for line in accepted["commands"] if ":NET:TTSHEX:" in line)
-    assert bytes.fromhex(tts_command).decode("utf-8") == "学生，解锁成功。"
+    assert bytes.fromhex(tts_command).decode("utf-8") == "学生解锁成功。"
 
     rejected = client.post(
         "/api/rfid/scan",
@@ -278,9 +295,9 @@ def test_rfid_speech_uses_natural_names_without_spelling_internal_ids():
     assert rfid_spoken_name("student") == "学生"
     assert rfid_spoken_name("王老师") == "王老师"
     assert rfid_spoken_name("alice_01") == ""
-    assert rfid_access_speech("student") == "学生，解锁成功。"
+    assert rfid_access_speech("student") == "学生解锁成功。"
     assert rfid_access_speech("alice_01") == "解锁成功，欢迎回来。"
-    assert rfid_access_speech("teacher", enrolled=True) == "老师，注册成功。"
+    assert rfid_access_speech("teacher", enrolled=True) == "老师注册成功。"
 
 
 def test_context_db_persists_registered_card_across_app_restart(tmp_path):
@@ -357,6 +374,32 @@ def test_unknown_card_cannot_chat_until_card_or_control_context_exists():
     assert after_card.status_code == 200
 
 
+def test_real_rfid_authorization_expires_but_identity_context_remains():
+    client = make_client(control_token="control-secret", device_token="device-secret")
+    register_card(client, token="control-secret")
+    scan = client.post(
+        "/api/rfid/scan",
+        headers={"X-Device-Token": "device-secret"},
+        json={"device_id": "desktop-agent-001", "uid": "04A1B2C3", "source": "rc522"},
+    )
+    assert scan.status_code == 200
+    assert scan.json()["state"]["sensors"]["active_context_physical_card"] is True
+
+    device = client.app.state.store.ensure_device("desktop-agent-001")
+    device.sensors["active_context_at"] = (
+        now_utc() - timedelta(seconds=RFID_PHYSICAL_CONTEXT_TTL_SECONDS + 1)
+    ).isoformat()
+
+    state = client.get("/api/state/desktop-agent-001").json()
+    denied = client.post("/api/chat", json={"text": "未重新刷卡时不能继续控制"})
+
+    assert state["current_user"]["name"] == "student"
+    assert state["active_session_id"]
+    assert state["sensors"]["active_context_physical_card"] is False
+    assert state["sensors"]["active_context_physical_card_expired"] is True
+    assert denied.status_code == 403
+
+
 def test_different_cards_route_to_different_user_contexts():
     client = make_client()
 
@@ -400,6 +443,34 @@ def test_chat_queues_commands_and_ack_line():
     diagnostics = client.get("/api/realtime/diagnostics/desktop-agent-001").json()
     assert diagnostics["state"]["last_ack"]["action_id"] == action_id
     assert diagnostics["state"]["pending_action_count"] == len(chat["actions"]) - 1
+
+
+def test_tts_chunks_are_released_one_at_a_time_after_ack():
+    client = make_client()
+    response = client.post(
+        "/api/hardware/action",
+        json={
+            "device_id": "desktop-agent-001",
+            "type": "tts_speak",
+            "payload": {"text": "我不偏爱谁。他们都很厉害！"},
+        },
+    ).json()
+
+    first_batch = client.get("/api/hardware/commands/desktop-agent-001").json()
+    speech_actions = [action for action in first_batch["actions"] if action["type"] == "tts_speak"]
+    assert len(speech_actions) == 1
+    first_speech = speech_actions[0]
+    assert bytes.fromhex(first_speech["command"].split("NET:TTSHEX:", 1)[1]).decode("utf-8") == "我不偏爱谁。"
+    assert len(response["actions"]) == 2
+
+    client.post("/api/hardware/ack", json={"line": f"BT:ACK:{first_speech['id']}:OK"})
+    assert client.get("/api/hardware/commands/desktop-agent-001").json()["actions"] == []
+    client.app.state.store._tts_ready_at["desktop-agent-001"] = now_utc()
+    second_batch = client.get("/api/hardware/commands/desktop-agent-001").json()
+    assert len(second_batch["actions"]) == 1
+    second_speech = second_batch["actions"][0]
+    assert second_speech["type"] == "tts_speak"
+    assert bytes.fromhex(second_speech["command"].split("NET:TTSHEX:", 1)[1]).decode("utf-8") == "他们都很厉害！"
 
 
 def test_web_chat_does_not_mark_unseen_hardware_online():
@@ -500,7 +571,7 @@ def test_chat_can_answer_device_status_from_live_snapshot():
     assert "湿度 48.2%" in response["reply"]
     assert response["speech"]
     assert response["state"]["last_speech"] == response["speech"]
-    assert len(response["speech"].encode("utf-8")) <= 90
+    assert len(response["speech"].encode("utf-8")) <= 180
     assert any(":NET:OLED:STATUS OK" in line for line in response["commands"])
 
 
@@ -626,6 +697,7 @@ def test_hardware_telemetry_updates_sensor_snapshot():
     assert data["sensors"]["interaction_hint"] == "object_near"
     assert data["sensors"]["rgb_status"] == "near_object"
     assert data["sensors"]["rgb_reason"] == "interaction_zone"
+    assert data["sensors"]["last_telemetry_at"]
 
 
 def test_hardware_telemetry_clears_stale_distance_when_disabled():
@@ -673,6 +745,10 @@ def test_websocket_text_loop_sends_protocol_events():
         assistant = ws.receive_json()
         commands = ws.receive_json()
         state_idle = ws.receive_json()
+        action_id = commands["lines"][0].split(":", 3)[2]
+
+        ws.send_json({"type": "ack", "line": f"BT:ACK:{action_id}:OK"})
+        ack = ws.receive_json()
 
     assert state_think == {"type": "state", "state": "think", "stage": "agent"}
     assert assistant["type"] == "assistant"
@@ -680,6 +756,10 @@ def test_websocket_text_loop_sends_protocol_events():
     assert commands["type"] == "stm32/commands"
     assert any(":NET:OLED:FOCUS 25 MIN" in line for line in commands["lines"])
     assert state_idle == {"type": "state", "state": "idle"}
+    assert ack["type"] == "ack"
+    assert ack["action_id"] == action_id
+    assert ack["ok"] is True
+    assert ack["state"]["ack_ok_count"] == 1
 
     diagnostics = client.get("/api/realtime/diagnostics/desktop-agent-001").json()
     assert diagnostics["state"]["session_connected"] is False
@@ -714,6 +794,29 @@ def test_button_event_interrupts_audio_and_updates_diagnostics():
     assert sensors["last_button_line"] == "BT:BTN:KEY2:SHORT:120"
     assert sensors["last_button_duration_ms"] == 120
     assert sensors["interrupt_seq"] == 1
+    assert sensors["recent_button_events"][-1]["seq"] == sensors["last_button_seq"]
+    assert sensors["recent_button_events"][-1]["line"] == "BT:BTN:KEY2:SHORT:120"
+
+
+def test_button_event_history_keeps_key2_hold_and_release_order():
+    client = make_client()
+
+    client.post(
+        "/api/hardware/button",
+        json={"device_id": "desktop-agent-001", "line": "BT:BTN:KEY2:HOLD_START:600", "source": "stm32"},
+    )
+    client.post(
+        "/api/hardware/button",
+        json={"device_id": "desktop-agent-001", "line": "BT:BTN:KEY2:UP:1200", "source": "stm32"},
+    )
+
+    sensors = client.get("/api/realtime/diagnostics/desktop-agent-001").json()["state"]["sensors"]
+    recent = sensors["recent_button_events"]
+    assert [item["line"] for item in recent[-2:]] == [
+        "BT:BTN:KEY2:HOLD_START:600",
+        "BT:BTN:KEY2:UP:1200",
+    ]
+    assert recent[-2]["seq"] < recent[-1]["seq"]
 
 
 def test_realtime_inject_uses_same_text_loop():
@@ -735,6 +838,18 @@ def test_hardware_action_queues_ui_state_for_polling_when_no_session():
     assert data["commands"][0].endswith(":NET:UI:LISTEN")
     queued = client.get("/api/hardware/commands/desktop-agent-001").json()
     assert queued["commands"] == data["commands"]
+
+
+def test_hardware_action_queues_read_only_uart_self_check():
+    client = make_client()
+
+    response = client.post(
+        "/api/hardware/action",
+        json={"type": "self_check_probe", "payload": {}, "source": "web_self_check"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["commands"][0].endswith(":NET:UART?")
 
 
 def test_manual_lock_priority_blocks_lower_priority_ai_unlock():

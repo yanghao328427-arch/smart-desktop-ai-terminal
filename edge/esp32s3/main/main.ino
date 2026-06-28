@@ -87,6 +87,7 @@ bool wsStarted = false;
 String usbLine;
 String stm32Line;
 unsigned long lastHeartbeatMs = 0;
+unsigned long lastTelemetryPostMs = 0;
 unsigned long lastAckMs = 0;
 unsigned long lastStm32TxMs = 0;
 unsigned long lastUartKeepaliveMs = 0;
@@ -104,7 +105,9 @@ bool micBusy = false;
 static const unsigned long UART_OK_WINDOW_MS = 15000;
 static const unsigned long UART_KEEPALIVE_INTERVAL_MS = 10000;
 static const unsigned long UART_TX_QUIET_MS = 7000;
-static const unsigned long COMMAND_POLL_INTERVAL_MS = 800;
+static const unsigned long COMMAND_POLL_INTERVAL_MS = 10000;
+static const unsigned long TELEMETRY_POST_INTERVAL_MS = 10000;
+static const unsigned long HEARTBEAT_INTERVAL_MS = 15000;
 static const unsigned long RFID_POLL_INTERVAL_MS = 200;
 static const unsigned long RFID_REPEAT_SUPPRESS_MS = 15000;
 static const unsigned long RFID_HEALTH_INTERVAL_MS = 5000;
@@ -120,6 +123,10 @@ static const size_t MIC_UPLOAD_CHUNK_SIZE = 512;
 static const uint8_t MIC_UPLOAD_INTER_CHUNK_DELAY_MS = 2;
 static const size_t MIC_UPLOAD_CHUNKED_PART_SIZE = 8192;
 static const uint8_t MIC_UPLOAD_CHUNKED_PART_ATTEMPTS = 4;
+static const uint8_t STM32_ACTION_QUEUE_CAPACITY = 12;
+static const uint8_t STM32_ACTION_MAX_ATTEMPTS = 3;
+static const uint32_t STM32_ACTION_ACK_TIMEOUT_MS = 1800;
+static const uint8_t STM32_FRAGMENT_PAYLOAD_CHARS = 20;
 
 struct AsrUploadResult {
   bool requestOk = false;
@@ -142,6 +149,23 @@ struct ChunkUploadResponse {
   String error;
   AsrUploadResult asr;
 };
+
+struct Stm32ActionDelivery {
+  String actionId;
+  String line;
+  uint8_t attempts = 0;
+  uint32_t sentAtMs = 0;
+  bool active = false;
+};
+
+Stm32ActionDelivery stm32ActionQueue[STM32_ACTION_QUEUE_CAPACITY];
+uint8_t stm32ActionQueueHead = 0;
+uint8_t stm32ActionQueueTail = 0;
+uint8_t stm32ActionQueueCount = 0;
+Stm32ActionDelivery activeStm32Action;
+
+void sendAckToBackend(const String &line);
+bool wrappedActionId(const String &line, String &actionId);
 
 uint8_t *allocLargeBuffer(size_t size) {
   uint8_t *buffer = (uint8_t *)ps_malloc(size);
@@ -247,6 +271,109 @@ void sendToStm32(const String &line, uint16_t postDelayMs = 80) {
   lastStm32TxMs = millis();
   if (postDelayMs > 0) {
     delay(postDelayMs);
+  }
+}
+
+void sendFramedToStm32(const String &line) {
+  String actionId;
+  if (!wrappedActionId(line, actionId)) {
+    sendToStm32(line);
+    return;
+  }
+  uint8_t total = (uint8_t)((line.length() + STM32_FRAGMENT_PAYLOAD_CHARS - 1) / STM32_FRAGMENT_PAYLOAD_CHARS);
+  for (uint8_t index = 0; index < total; ++index) {
+    size_t offset = (size_t)index * STM32_FRAGMENT_PAYLOAD_CHARS;
+    String fragment = "NET:FRAG:" + actionId + ":" + String(index + 1) + ":" + String(total) + ":" +
+                      line.substring(offset, offset + STM32_FRAGMENT_PAYLOAD_CHARS);
+    sendToStm32(fragment, 12);
+  }
+}
+
+bool wrappedActionId(const String &line, String &actionId) {
+  if (!line.startsWith("NET:CMD:")) {
+    return false;
+  }
+  int commandStart = line.indexOf(":NET:", strlen("NET:CMD:"));
+  if (commandStart < 0) {
+    return false;
+  }
+  actionId = line.substring(strlen("NET:CMD:"), commandStart);
+  return actionId.length() > 0;
+}
+
+bool actionAlreadyTracked(const String &actionId) {
+  if (activeStm32Action.active && activeStm32Action.actionId == actionId) {
+    return true;
+  }
+  for (uint8_t offset = 0; offset < stm32ActionQueueCount; ++offset) {
+    uint8_t index = (stm32ActionQueueHead + offset) % STM32_ACTION_QUEUE_CAPACITY;
+    if (stm32ActionQueue[index].actionId == actionId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void transmitActiveStm32Action() {
+  sendFramedToStm32(activeStm32Action.line);
+  activeStm32Action.attempts++;
+  activeStm32Action.sentAtMs = millis();
+}
+
+void enqueueStm32Action(const String &line) {
+  String actionId;
+  if (!wrappedActionId(line, actionId)) {
+    sendToStm32(line);
+    return;
+  }
+  if (actionAlreadyTracked(actionId)) {
+    return;
+  }
+  if (stm32ActionQueueCount >= STM32_ACTION_QUEUE_CAPACITY) {
+    Serial.println("[STM32] action queue full");
+    sendAckToBackend("BT:ACK:" + actionId + ":ERR");
+    return;
+  }
+  Stm32ActionDelivery &slot = stm32ActionQueue[stm32ActionQueueTail];
+  slot.actionId = actionId;
+  slot.line = line;
+  slot.attempts = 0;
+  slot.sentAtMs = 0;
+  slot.active = false;
+  stm32ActionQueueTail = (stm32ActionQueueTail + 1) % STM32_ACTION_QUEUE_CAPACITY;
+  stm32ActionQueueCount++;
+}
+
+void serviceStm32ActionQueue() {
+  if (activeStm32Action.active) {
+    if (millis() - activeStm32Action.sentAtMs < STM32_ACTION_ACK_TIMEOUT_MS) {
+      return;
+    }
+    if (activeStm32Action.attempts < STM32_ACTION_MAX_ATTEMPTS) {
+      Serial.printf("[STM32] retry action=%s attempt=%u\n", activeStm32Action.actionId.c_str(), activeStm32Action.attempts + 1);
+      transmitActiveStm32Action();
+      return;
+    }
+    Serial.printf("[STM32] action failed after retries=%s\n", activeStm32Action.actionId.c_str());
+    sendAckToBackend("BT:ACK:" + activeStm32Action.actionId + ":ERR");
+    activeStm32Action.active = false;
+    return;
+  }
+  if (stm32ActionQueueCount == 0) {
+    return;
+  }
+  activeStm32Action = stm32ActionQueue[stm32ActionQueueHead];
+  stm32ActionQueueHead = (stm32ActionQueueHead + 1) % STM32_ACTION_QUEUE_CAPACITY;
+  stm32ActionQueueCount--;
+  activeStm32Action.active = true;
+  transmitActiveStm32Action();
+}
+
+void noteStm32ActionAck(const String &line) {
+  int firstSeparator = line.indexOf(':', strlen("BT:ACK:"));
+  String actionId = firstSeparator >= 0 ? line.substring(strlen("BT:ACK:"), firstSeparator) : "";
+  if (activeStm32Action.active && activeStm32Action.actionId == actionId) {
+    activeStm32Action.active = false;
   }
 }
 
@@ -552,7 +679,7 @@ void forwardCommandsFromJson(const String &jsonText) {
     sendToStm32("NET:UART?", 0);
   }
   for (JsonVariant command : commands) {
-    sendToStm32(command.as<String>());
+    enqueueStm32Action(command.as<String>());
   }
 }
 
@@ -568,22 +695,23 @@ void pollBackendCommands() {
 }
 
 void sendAckToBackend(const String &line) {
+  JsonDocument wsDoc;
+  wsDoc["type"] = "ack";
+  wsDoc["line"] = line;
+  String wsPayload;
+  serializeJson(wsDoc, wsPayload);
+  if (wsConnected && webSocket.sendTXT(wsPayload)) {
+    Serial.println("[ACK] forwarded via websocket");
+    return;
+  }
+
   JsonDocument httpDoc;
   httpDoc["device_id"] = DEVICE_ID;
   httpDoc["line"] = line;
   String body;
   serializeJson(httpDoc, body);
   if (postJson("/api/hardware/ack", body)) {
-    return;
-  }
-
-  JsonDocument wsDoc;
-  wsDoc["type"] = "ack";
-  wsDoc["line"] = line;
-  String wsPayload;
-  serializeJson(wsDoc, wsPayload);
-  if (wsConnected) {
-    webSocket.sendTXT(wsPayload);
+    Serial.println("[ACK] forwarded via http fallback");
   }
 }
 
@@ -664,6 +792,10 @@ void sendTelemetryToBackend(String line) {
 #if SMARTDESK_IOTDA_ENABLED
   publishTelemetryToIotda(sensors);
 #endif
+  if (lastTelemetryPostMs > 0 && millis() - lastTelemetryPostMs < TELEMETRY_POST_INTERVAL_MS) {
+    return;
+  }
+  lastTelemetryPostMs = millis();
   postJson("/api/hardware/telemetry", body);
 }
 
@@ -693,7 +825,7 @@ void handleWsText(const uint8_t *payload, size_t length) {
       sendToStm32("NET:UART?", 0);
     }
     for (JsonVariant line : lines) {
-      sendToStm32(line.as<String>());
+      enqueueStm32Action(line.as<String>());
     }
   } else if (type == "speak") {
     String speak = doc["text"] | "";
@@ -822,7 +954,7 @@ void startWebSocket() {
     webSocket.begin(serverHost.c_str(), serverPort, wsPath().c_str());
   }
   webSocket.onEvent(webSocketEvent);
-  webSocket.setReconnectInterval(5000);
+  webSocket.setReconnectInterval(30000);
   webSocket.enableHeartbeat(15000, 3000, 2);
   wsStarted = true;
   Serial.print("[WS] connecting to ");
@@ -841,7 +973,7 @@ bool pauseWebSocketForMicUpload() {
 }
 
 void sendHeartbeat(bool force = false) {
-  if (!force && millis() - lastHeartbeatMs < 5000) {
+  if (!force && millis() - lastHeartbeatMs < HEARTBEAT_INTERVAL_MS) {
     return;
   }
   lastHeartbeatMs = millis();
@@ -1798,6 +1930,16 @@ void handleSerialCommand(String line) {
     return;
   }
 
+  if (line == "CFG:WS:WAKE") {
+    if (wsConnected) {
+      webSocket.sendTXT("{\"type\":\"wake\"}");
+      Serial.println("[WS] wake test sent");
+    } else {
+      Serial.println("[WS] wake test unavailable; websocket not connected");
+    }
+    return;
+  }
+
   if (line.startsWith("CHAT:")) {
     JsonDocument doc;
     doc["type"] = "text";
@@ -1853,6 +1995,7 @@ void pollStm32() {
         if (stm32Line.startsWith("BT:ACK:")) {
           lastAckMs = millis();
           if (stm32Line.startsWith("BT:ACK:act_")) {
+            noteStm32ActionAck(stm32Line);
             sendAckToBackend(stm32Line);
           }
         } else if (stm32Line.startsWith("BT:PONG:")) {
@@ -1978,6 +2121,7 @@ void setup() {
 void loop() {
   pollUsbSerial();
   pollStm32();
+  serviceStm32ActionQueue();
   pollRfid();
   if (wsStarted) {
     webSocket.loop();

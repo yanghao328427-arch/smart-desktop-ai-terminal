@@ -16,7 +16,7 @@ app_port: 7860
 构建一个基于 STM32F103、XIAO ESP32S3 Sense、SYN6288 TTS 和 RC522 RFID 的桌面级智能 AI 终端：
 
 - STM32：本地传感器采集、OLED、RGB、蜂鸣器、风扇、舵机、SYN6288 播报。
-- ESP32S3 Sense：WiFi、RFID、STM32 UART 桥接，并通过本机 HTTP relay 接入公网后端。
+- ESP32S3 Sense：WiFi、RFID、STM32 UART 桥接，当前直接接入阿里云 ECS 公网后端。
 - FastAPI 后端：设备状态、RFID 用户、AI 对话、动作规划、实时诊断、Web/移动端控制台。
 - 应用层：Web 控制台和移动端页面，满足课程设计对 PC/移动应用端的要求。
 
@@ -24,7 +24,7 @@ app_port: 7860
 
 ## 当前重建原则
 
-1. 当前答辩主链使用 ESP32S3 -> 本机 HTTP relay -> Hugging Face；WebSocket 保留给网页实时事件和兼容链路。
+1. 当前答辩主链使用 ESP32S3 -> 阿里云 ECS；WebSocket 为主，HTTP轮询为兜底，本机relay仅保留为应急路径。
 2. 先稳定文本闭环：`用户问题 -> 后端 Agent -> STM32 命令 -> TTS/OLED/执行器`。
 3. 音频流在文本闭环稳定后接入，优先采用 WebSocket 二进制帧或有 ACK 的分片。
 4. RFID 独立验收后再并入主链路，避免调试复杂度叠加。
@@ -96,15 +96,15 @@ python .\tools\cloud_dialogue_smoke.py --base-url http://127.0.0.1:8083
 python .\tools\realtime_readiness_check.py
 ```
 
-该脚本默认访问已部署的 Hugging Face 服务，只读取健康、设备状态和诊断接口；它要求云端就绪、ESP32 在线、UART 正常、最近上报不超过 20 秒，并检测至少两项真实传感器字段。`"verdict": "PASS"` 才表示可以把页面数据作为当场实时数据展示。ESP32 刚重新插入或重启时，先预留 1—3 分钟完成 Wi-Fi/UART 保活启动，再运行此检查。
+该脚本默认访问已部署的阿里云 ECS 服务，只读取健康、设备状态和诊断接口；它要求云端模型和持久化存储就绪、ESP32 在线、WebSocket 会话已连接、UART 正常、错误 ACK 与待执行队列均为 0、最近上报不超过 20 秒，并检测至少两项真实传感器字段。`"verdict": "PASS"` 才表示可以把页面数据作为当场实时数据展示。ESP32 刚重新插入或重启时，先预留 1—3 分钟完成 Wi-Fi/UART 保活启动，再运行此检查。
 
-整套答辩启动（relay、实时自检、网页控制台与语音前端）：
+整套答辩启动（ECS直连检查、必要时启动relay兜底、网页控制台与语音前端）：
 
 ```powershell
 .\tools\start_defense_demo.cmd
 ```
 
-启动器不会重复开启已监听的 relay；通过实时自检后才会打开控制台，并在用户确认后启动 KEY2 触发的笔记本麦克风 PTT 前端。详见 [答辩演示脚本](docs/DEMO_STORYBOARD.md#一键启动整套答辩链路)。
+启动器检测到ESP32已直连ECS时不会启动relay；通过实时自检后才会打开控制台，并在用户确认后启动 KEY2 触发的笔记本麦克风 PTT 前端。详见 [答辩演示脚本](docs/DEMO_STORYBOARD.md#一键启动整套答辩链路)。
 
 测试：
 
@@ -135,11 +135,13 @@ RFID 用户、卡片绑定、会话和对话上下文会持久化到本机 `back
 - [微信小程序路线](docs/MINIPROGRAM_PLAN.md)
 - [本地密钥与配置](docs/LOCAL_SECRET_CONFIG.md)
 - [答辩演示脚本](docs/DEMO_STORYBOARD.md)
+- [答辩最终运行卡](docs/DEFENSE_FINAL_RUNBOOK_2026-06-24.md)
 - [答辩现场运行卡](docs/DEMO_STORYBOARD.md#0-开场自检30-秒)
 - [已安装技能与项目应用方式](docs/SKILLS_APPLIED.md)
 - [测试计划](docs/TEST_PLAN.md)
 - [重建禁区](docs/REBUILD_GUARDRAILS.md)
 - [答辩验收清单](docs/ACCEPTANCE_CHECKLIST.md)
+- [阿里云 ECS 迁移状态](docs/ALIYUN_ECS_MIGRATION_2026-06-24.md)
 
 ## 最短验收闭环
 

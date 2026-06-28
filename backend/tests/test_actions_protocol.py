@@ -1,4 +1,4 @@
-from app.actions import SYN6288_NATURAL_PREFIX, command_from_action
+from app.actions import SYN6288_NATURAL_PREFIX, WRAPPED_TTS_MAX_CHARS, command_from_action, split_tts_text, wrap_command
 from app.schemas import ActionSpec
 
 
@@ -30,7 +30,18 @@ def test_tts_action_removes_fragile_speech_symbols():
     assert "～" not in text
     assert "🙂" not in text
     assert text.startswith(f"{SYN6288_NATURAL_PREFIX}记得，你刚才问了")
-    assert len(text.encode("utf-8")) <= 30
+    assert len(text.encode("utf-8")) <= 90
+
+
+def test_tts_action_splits_at_complete_sentences_without_losing_the_reply():
+    chunks = split_tts_text("我不偏爱谁。他们都很厉害！")
+
+    assert chunks == ["我不偏爱谁。", "他们都很厉害！"]
+    for chunk in chunks:
+        command = command_from_action(ActionSpec(type="tts_speak", payload={"text": chunk}))
+        wrapped = wrap_command("act_123456789abc", command)
+        assert decode_tts_command(f"NET:TTSHEX:{wrapped.split(':NET:TTSHEX:', 1)[1]}") == chunk
+        assert len(wrapped) <= WRAPPED_TTS_MAX_CHARS
 
 
 def test_volume_action_supports_absolute_and_relative_levels():
@@ -60,6 +71,14 @@ def test_ui_state_action_uses_stm32_ui_commands():
 
 def test_audio_stop_action_uses_tts_stop_command():
     assert command_from_action(ActionSpec(type="audio_stop", payload={})) == "NET:TTS:STOP"
+
+
+def test_telemetry_request_action_is_read_only():
+    assert command_from_action(ActionSpec(type="telemetry_request", payload={})) == "NET:TELEMETRY?"
+
+
+def test_self_check_probe_uses_compatible_uart_ping():
+    assert command_from_action(ActionSpec(type="self_check_probe", payload={})) == "NET:UART?"
 
 
 def test_user_context_action_uses_protocol_safe_fields():

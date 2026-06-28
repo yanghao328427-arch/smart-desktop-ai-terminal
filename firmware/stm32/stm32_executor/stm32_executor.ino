@@ -62,6 +62,7 @@ static const uint16_t MUSIC_NOTE_GAP_MS = 35;
 static const uint32_t UI_BOOT_HOLD_MS = 1800;
 static const uint32_t UI_TRANSIENT_HOLD_MS = 2200;
 static const uint32_t UI_SPEAK_HOLD_MS = 7000;
+static const uint32_t UI_ERROR_HOLD_MS = 3000;
 static const uint32_t RGB_ACK_FLASH_MS = 520;
 static const uint8_t OLED_WIDTH = 128;
 static const uint8_t OLED_HEIGHT = 64;
@@ -96,6 +97,21 @@ struct MelodyNote {
 String usbLine;
 String espLine;
 uint32_t espEmptyDelimiterCount = 0;
+static const uint8_t RECENT_ACTION_ACK_CAPACITY = 12;
+static const size_t ESP_COMMAND_MAX_CHARS = 230;
+static const uint8_t ESP_FRAGMENT_MAX_COUNT = 12;
+
+struct RecentActionAck {
+  String actionId;
+  bool ok = false;
+};
+
+RecentActionAck recentActionAcks[RECENT_ACTION_ACK_CAPACITY];
+uint8_t recentActionAckCursor = 0;
+String espFragmentActionId;
+String espFragmentPayload;
+uint8_t espFragmentNextIndex = 1;
+uint8_t espFragmentTotal = 0;
 uint32_t lastTelemetryMs = 0;
 uint32_t lastEspRxActivityMs = 0;
 bool aht20Initialized = false;
@@ -331,6 +347,25 @@ void sendAck(const ParsedCommand &parsed, bool ok) {
   } else {
     writeBack(ok ? "BT:OK" : "BT:ERR");
   }
+}
+
+bool cachedActionAck(const String &actionId, bool &ok) {
+  for (uint8_t index = 0; index < RECENT_ACTION_ACK_CAPACITY; ++index) {
+    if (recentActionAcks[index].actionId == actionId) {
+      ok = recentActionAcks[index].ok;
+      return true;
+    }
+  }
+  return false;
+}
+
+void rememberActionAck(const ParsedCommand &parsed, bool ok) {
+  if (!parsed.wrapped || parsed.actionId.length() == 0) {
+    return;
+  }
+  recentActionAcks[recentActionAckCursor].actionId = parsed.actionId;
+  recentActionAcks[recentActionAckCursor].ok = ok;
+  recentActionAckCursor = (recentActionAckCursor + 1) % RECENT_ACTION_ACK_CAPACITY;
 }
 
 ParsedCommand parseLine(String line) {
@@ -767,6 +802,7 @@ bool isKnownNetCommandStart(const String &text, int index) {
   }
 
   static const char *prefixes[] = {
+    "NET:FRAG:",
     "NET:CMD:",
     "NET:UART?",
     "NET:I2C?",
@@ -877,7 +913,8 @@ void updateUiMachineState(uint32_t now) {
   uint32_t age = now - uiMachineStateStartedMs;
   if ((uiMachineState == UI_STATE_BOOT && age >= UI_BOOT_HOLD_MS) ||
       (uiMachineState == UI_STATE_EXECUTING && age >= UI_TRANSIENT_HOLD_MS) ||
-      (uiMachineState == UI_STATE_SPEAKING && age >= UI_SPEAK_HOLD_MS)) {
+      (uiMachineState == UI_STATE_SPEAKING && age >= UI_SPEAK_HOLD_MS) ||
+      (uiMachineState == UI_STATE_ERROR && age >= UI_ERROR_HOLD_MS)) {
     enterUiMachineState(UI_STATE_READY, now);
   }
 }
@@ -1433,6 +1470,8 @@ void updateRgbAnimation() {
       writeRgbRaw(pulse, pulse, false);
       break;
     case UI_STATE_LOCKED:
+      writeRgbRaw(true, false, false);
+      break;
     case UI_STATE_ERROR:
       {
         bool doubleBlink = phase < 140 || (phase >= 280 && phase < 420);
@@ -2340,6 +2379,8 @@ bool handleUserContextCommand(const String &payload) {
       currentCardUid = "-";
     }
   }
+  infoScreen = INFO_SCREEN_USER;
+  infoOverlayUntilMs = millis() + SCREEN_OVERLAY_MS;
   uiEvent.detail = String("USER ") + compactForDisplay(currentUserId, 14);
   oledRenderPending = true;
   return true;
@@ -2384,6 +2425,16 @@ bool executeNetCommand(const String &command) {
     line += String(oledFps);
     line += ",volume_pct=";
     line += String(speechVolumePercent);
+    line += ",state=";
+    line += uiMachineCompactTitle(uiMachineState);
+    line += ",state_code=";
+    line += uiMachineCode(uiMachineState);
+    line += ",user_id=";
+    line += currentUserId;
+    line += ",card_uid=";
+    line += currentCardUid;
+    line += ",user_mode=";
+    line += currentUserMode;
     writeBack(line);
     return true;
   }
@@ -2554,6 +2605,11 @@ void handleSingleCommandLine(String line, const char *source) {
   uint32_t parseStartedMs = millis();
   ParsedCommand parsed = parseLine(line);
   uint32_t parseMs = millis() - parseStartedMs;
+  bool cachedOk = false;
+  if (parsed.wrapped && cachedActionAck(parsed.actionId, cachedOk)) {
+    sendAck(parsed, cachedOk);
+    return;
+  }
   if (parsed.command.length() == 0) {
     commandLightMeasureActive = false;
     commandHadLight = false;
@@ -2577,6 +2633,7 @@ void handleSingleCommandLine(String line, const char *source) {
   uint32_t actionMs = millis() - actionStartedMs;
   commandLightMeasureActive = false;
   sendAck(parsed, ok);
+  rememberActionAck(parsed, ok);
   finishUiEvent(parseMs, actionMs, millis() - receivedMs, ok);
   logEventTiming(source, parsed, ok);
 }
@@ -2584,6 +2641,43 @@ void handleSingleCommandLine(String line, const char *source) {
 void handleLine(String line, const char *source) {
   line.trim();
   if (line.length() == 0) {
+    return;
+  }
+
+  if (strcmp(source, "ESP") == 0 && line.startsWith("NET:FRAG:")) {
+    int actionEnd = line.indexOf(':', strlen("NET:FRAG:"));
+    int indexEnd = actionEnd >= 0 ? line.indexOf(':', actionEnd + 1) : -1;
+    int totalEnd = indexEnd >= 0 ? line.indexOf(':', indexEnd + 1) : -1;
+    if (actionEnd < 0 || indexEnd < 0 || totalEnd < 0) {
+      espFragmentPayload = "";
+      return;
+    }
+    String actionId = line.substring(strlen("NET:FRAG:"), actionEnd);
+    uint8_t index = (uint8_t)line.substring(actionEnd + 1, indexEnd).toInt();
+    uint8_t total = (uint8_t)line.substring(indexEnd + 1, totalEnd).toInt();
+    String payload = line.substring(totalEnd + 1);
+    if (actionId.length() == 0 || index == 0 || total == 0 || total > ESP_FRAGMENT_MAX_COUNT || index > total) {
+      espFragmentPayload = "";
+      return;
+    }
+    if (index == 1) {
+      espFragmentActionId = actionId;
+      espFragmentPayload = "";
+      espFragmentNextIndex = 1;
+      espFragmentTotal = total;
+    }
+    if (actionId != espFragmentActionId || total != espFragmentTotal || index != espFragmentNextIndex ||
+        espFragmentPayload.length() + payload.length() > ESP_COMMAND_MAX_CHARS) {
+      espFragmentPayload = "";
+      return;
+    }
+    espFragmentPayload += payload;
+    espFragmentNextIndex++;
+    if (index == total) {
+      String assembled = espFragmentPayload;
+      espFragmentPayload = "";
+      handleLine(assembled, source);
+    }
     return;
   }
 
@@ -2634,6 +2728,11 @@ void pollSerial(Stream &stream, String &buffer, const char *source) {
       handleLine(buffer, source);
       buffer = "";
     } else {
+      if (strcmp(source, "ESP") == 0 && buffer.length() >= ESP_COMMAND_MAX_CHARS) {
+        usbConsole.println("[ESP] command line too long; discarding");
+        buffer = "";
+        continue;
+      }
       buffer += ch;
     }
   }

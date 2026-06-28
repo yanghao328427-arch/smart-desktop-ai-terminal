@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -71,8 +72,8 @@ def rfid_spoken_name(name: str | None) -> str:
 def rfid_access_speech(name: str | None, *, enrolled: bool = False) -> str:
     spoken_name = rfid_spoken_name(name)
     if enrolled:
-        return f"{spoken_name}，注册成功。" if spoken_name else "新卡注册成功。"
-    return f"{spoken_name}，解锁成功。" if spoken_name else "解锁成功，欢迎回来。"
+        return f"{spoken_name}注册成功。" if spoken_name else "新卡注册成功。"
+    return f"{spoken_name}解锁成功。" if spoken_name else "解锁成功，欢迎回来。"
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -117,17 +118,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return
         raise HTTPException(status_code=401, detail="control or device token required")
 
+    def has_fresh_physical_context(device_id: str) -> bool:
+        device = store.ensure_device(device_id)
+        return bool(
+            device.current_user
+            and device.active_session_id
+            and device.sensors.get("active_context_physical_card") is True
+        )
+
+    def has_websocket_user_context(device_id: str) -> bool:
+        device = store.ensure_device(device_id)
+        if not settings.control_token:
+            return bool(device.current_user and device.active_session_id)
+        return bool(
+            device.current_user
+            and device.active_session_id
+            and device.sensors.get("active_context_physical_card") is True
+        )
+
     def ensure_user_or_control_context(device_id: str, x_demo_token: str | None, user_id: str | None = None) -> bool:
         if control_token_ok(x_demo_token):
             if user_id:
                 store.select_user_context(device_id, user_id, source="control_select")
             return True
-        device = store.ensure_device(device_id)
-        if (
-            device.current_user
-            and device.active_session_id
-            and device.sensors.get("active_context_physical_card") is True
-        ):
+        if has_fresh_physical_context(device_id):
             return False
         raise HTTPException(status_code=403, detail="registered RFID card or control token required")
 
@@ -153,6 +167,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
+    async def deliver_pending_actions(device_id: str, *, mark_sent: bool = True) -> tuple[list[Any], list[str], bool]:
+        pending = store.pending_commands(device_id, mark_sent=False, mark_seen=False)
+        commands = [action.wrapped_line for action in pending]
+        if not commands:
+            return pending, commands, False
+        delivered = await manager.broadcast(device_id, {"type": "stm32/commands", "lines": commands})
+        if delivered and mark_sent:
+            store.mark_actions_sent([action.id for action in pending])
+        return pending, commands, delivered
+
+    async def release_next_tts_chunk(device_id: str) -> None:
+        delay_seconds = store.tts_release_delay_seconds(device_id)
+        if delay_seconds:
+            await asyncio.sleep(delay_seconds)
+        await deliver_pending_actions(device_id)
+
     async def dispatch_actions(
         device_id: str,
         specs: list[ActionSpec],
@@ -166,10 +196,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             control_source=control_source,
             control_priority=control_priority,
         )
-        commands = [action.wrapped_line for action in actions]
-        delivered = await manager.broadcast(device_id, {"type": "stm32/commands", "lines": commands})
-        if delivered:
-            store.mark_actions_sent([action.id for action in actions])
+        _, commands, delivered = await deliver_pending_actions(device_id)
         return actions, commands, delivered
 
     async def handle_button_event(device_id: str, line: str, source: str = "stm32") -> tuple[Any, list[Any], list[str]]:
@@ -242,15 +269,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         store.note_text_turn(device.device_id, text, plan.reply, plan.speech, source=source)
         actions = store.enqueue_actions(device.device_id, plan.actions, control_source="ai_chat", control_priority=40)
-        commands = [action.wrapped_line for action in actions]
 
         await manager.broadcast(
             device.device_id,
             {"type": "assistant", "text": plan.reply, "speech": plan.speech, "source": source},
         )
-        delivered = await manager.broadcast(device.device_id, {"type": "stm32/commands", "lines": commands})
-        if delivered:
-            store.mark_actions_sent([action.id for action in actions])
+        _, commands, _ = await deliver_pending_actions(device.device_id)
         await emit_state(device.device_id, DeviceRunState.idle)
         final_state = store.ensure_device(device.device_id)
         return ChatResponse(
@@ -283,7 +307,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         audio_dir.mkdir(parents=True, exist_ok=True)
         suffix = Path(filename or "audio.wav").suffix or ".wav"
         safe_suffix = suffix if len(suffix) <= 8 else ".wav"
-        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         audio_path = audio_dir / f"{stamp}-{uuid4().hex[:10]}{safe_suffix}"
         audio_path.write_bytes(content)
 
@@ -355,12 +379,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         configured_provider = settings.ai_provider.lower()
         cloud_ready = configured_provider == "dashscope_openai" and bool(settings.dashscope_api_key)
         provider = "dashscope_openai" if cloud_ready else "mock"
+        persistent_storage = any(
+            settings.context_db_path.is_relative_to(root)
+            for root in (Path("/data"), Path("/var/lib"))
+        )
         return HealthResponse(
             status="ok",
             protocol=settings.protocol,
             ai_provider=provider,
             ai_model=settings.ai_model if cloud_ready else "local-rules",
             cloud_ready=cloud_ready,
+            persistent_storage=persistent_storage,
             device_id=settings.device_id,
             edge_id=settings.edge_id,
         )
@@ -368,6 +397,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/state/{device_id}")
     def get_state(device_id: str):
         return store.ensure_device(device_id)
+
+    @app.post("/api/auth/verify")
+    def verify_administrator_password(
+        _auth: None = Depends(require_control_token),
+    ) -> dict[str, str | bool]:
+        return {"ok": True, "role": "administrator"}
 
     @app.get("/api/users", response_model=UsersResponse)
     def users(_auth: None = Depends(require_control_token)) -> UsersResponse:
@@ -476,17 +511,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         state = store.ensure_device(payload.device_id or settings.device_id)
-        delivered = await manager.broadcast(
-            state.device_id,
-            {"type": "stm32/commands", "lines": [action.wrapped_line for action in actions]},
-        )
-        if payload.mark_sent and delivered:
-            store.mark_actions_sent([action.id for action in actions])
+        _, commands, _ = await deliver_pending_actions(state.device_id, mark_sent=payload.mark_sent)
+        if payload.mark_sent:
             state = store.ensure_device(payload.device_id or settings.device_id)
         return HardwareActionResponse(
             device_id=state.device_id,
             actions=actions,
-            commands=[action.wrapped_line for action in actions],
+            commands=commands,
             state=state,
         )
 
@@ -508,6 +539,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             state.device_id,
             {"type": "ack", "action_id": action.id, "ok": ok, "state": state.model_dump(mode="json")},
         )
+        if action.type == "tts_speak":
+            if ok:
+                asyncio.create_task(release_next_tts_chunk(state.device_id))
+            else:
+                await deliver_pending_actions(state.device_id)
         return AckResponse(device_id=state.device_id, action_id=action.id, ok=ok, action=action, state=state)
 
     @app.post("/api/hardware/button")
@@ -608,7 +644,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             control_source=control_source,
             control_priority=control_priority,
         )
-        commands = [action.wrapped_line for action in actions]
         await manager.broadcast(
             state.device_id,
             {
@@ -622,9 +657,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "state": state.model_dump(mode="json"),
             },
         )
-        delivered = await manager.broadcast(state.device_id, {"type": "stm32/commands", "lines": commands})
-        if delivered:
-            store.mark_actions_sent([action.id for action in actions])
+        _, commands, _ = await deliver_pending_actions(state.device_id)
         return RfidScanResponse(
             uid=uid,
             source=payload.source,
@@ -868,9 +901,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             store.set_state(device_id, DeviceRunState.listen, online=True)
             await websocket.send_json({"type": "state", "state": "listen"})
             await websocket.send_json({"type": "speak", "text": "请说话"})
-            actions = store.enqueue_actions(device_id, [ActionSpec(type="tts_speak", payload={"text": "请说话"})])
-            store.mark_actions_sent([action.id for action in actions])
-            await websocket.send_json({"type": "stm32/commands", "lines": [action.wrapped_line for action in actions]})
+            store.enqueue_actions(device_id, [ActionSpec(type="tts_speak", payload={"text": "请说话"})])
+            await deliver_pending_actions(device_id)
             return
 
         if message_type == "button":
@@ -903,7 +935,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await websocket.send_json({"type": "error", "message": "text cannot be empty"})
                 return
             device = store.ensure_device(device_id)
-            if not device.current_user or not device.active_session_id:
+            if not has_websocket_user_context(device_id):
                 await websocket.send_json({"type": "error", "message": "registered RFID card required"})
                 return
             await run_text_turn(device_id, text, "websocket")
@@ -931,7 +963,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         if message_type == "tools/call":
             device = store.ensure_device(device_id)
-            if not device.current_user or not device.active_session_id:
+            if not has_websocket_user_context(device_id):
                 await websocket.send_json({"type": "error", "message": "registered RFID card required"})
                 return
             action_name = str(payload.get("name", "")).strip()
@@ -946,8 +978,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except ValueError as exc:
                 await websocket.send_json({"type": "error", "message": str(exc)})
                 return
-            store.mark_actions_sent([action.id for action in actions])
-            await websocket.send_json({"type": "stm32/commands", "lines": [action.wrapped_line for action in actions]})
+            await deliver_pending_actions(device_id)
             return
 
         if message_type in {"ack", "stm32/ack"}:
@@ -963,6 +994,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await websocket.send_json({"type": "error", "message": str(exc)})
                 return
             await websocket.send_json({"type": "ack", "action_id": action.id, "ok": ok, "state": state.model_dump(mode="json")})
+            if action.type == "tts_speak":
+                if ok:
+                    asyncio.create_task(release_next_tts_chunk(state.device_id))
+                else:
+                    await deliver_pending_actions(state.device_id)
             return
 
         await websocket.send_json({"type": "error", "message": f"unsupported message type: {message_type}"})

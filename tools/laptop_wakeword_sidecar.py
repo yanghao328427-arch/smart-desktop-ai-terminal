@@ -24,7 +24,7 @@ from laptop_mic_sidecar import (
 )
 
 
-DEFAULT_WAKE_PHRASES = ["灵宝灵宝", "你好灵宝"]
+DEFAULT_WAKE_PHRASES = ["你好小鑫"]
 DEFAULT_WAKE_SOURCE = "laptop_wakeword_listener"
 DEFAULT_COMMAND_SOURCE = "laptop_wakeword_command"
 
@@ -103,6 +103,37 @@ def run_wake_check(args: argparse.Namespace, sequence: int) -> dict[str, Any]:
             "error": response.get("error"),
         },
         "audio": audio,
+    }
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return result
+
+
+def run_wake_file_check(args: argparse.Namespace, wav_path: Path) -> dict[str, Any]:
+    response = post_wav(
+        base_url=args.base_url,
+        device_id=args.device_id,
+        wav_path=wav_path,
+        inject=False,
+        source=f"{args.wake_source}_silent_test",
+        sample_rate=args.sample_rate,
+        channels=args.channels,
+    )
+    text = str(response.get("text") or "")
+    matches = match_wake_phrases(text, args.wake_phrase)
+    result = {
+        "state": "WAKE_MATCH" if matches else "NO_MATCH",
+        "silent": True,
+        "injected": False,
+        "tts_actions": 0,
+        "wav": str(wav_path),
+        "matched": bool(matches),
+        "matches": matches,
+        "asr": {
+            "ok": response.get("ok"),
+            "provider": response.get("provider"),
+            "text": text,
+            "error": response.get("error"),
+        },
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return result
@@ -207,6 +238,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wait-ack-seconds", type=float, default=20.0)
     parser.add_argument("--once", action="store_true", help="Exit after the first successful wake-command cycle.")
     parser.add_argument("--max-wake-checks", type=int, default=0, help="Stop after N wake checks. 0 means keep listening.")
+    parser.add_argument("--test-wav", default="", help="Silent one-shot wake test from an existing WAV; never injects or plays TTS.")
+    parser.add_argument("--test-text", default="", help="Pure matcher test without microphone, ASR, Qwen, or hardware actions.")
     parser.add_argument("--confirm-start", action="store_true", help="Require Enter before wake listening starts.")
     parser.add_argument("--list-devices", action="store_true")
     return parser.parse_args()
@@ -221,6 +254,23 @@ def main() -> int:
 
     if args.list_devices:
         return list_audio_devices()
+    if args.test_text:
+        matches = match_wake_phrases(args.test_text, args.wake_phrase)
+        print(
+            json.dumps(
+                {
+                    "state": "WAKE_MATCH" if matches else "NO_MATCH",
+                    "silent": True,
+                    "asr_used": False,
+                    "text": args.test_text,
+                    "matched": bool(matches),
+                    "matches": matches,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0 if matches else 3
     if args.channels != 1:
         print("ERROR: backend ASR path currently expects mono audio; use --channels 1.", file=sys.stderr)
         return 2
@@ -230,6 +280,13 @@ def main() -> int:
 
     try:
         health = request_json("GET", f"{args.base_url}/api/health", timeout=10)
+        if args.test_wav:
+            wav_path = Path(args.test_wav).expanduser().resolve()
+            if not wav_path.is_file():
+                print(json.dumps({"ok": False, "error": f"WAV not found: {wav_path}"}, ensure_ascii=False))
+                return 2
+            result = run_wake_file_check(args, wav_path)
+            return 0 if result["matched"] else 3
         print(
             "[privacy] Laptop wake-word listener is about to start. It records short laptop-mic "
             "wake windows and uploads them to /api/asr/transcribe with inject=false.",

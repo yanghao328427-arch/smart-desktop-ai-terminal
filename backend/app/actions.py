@@ -123,8 +123,8 @@ TTS_TRANSLATION = str.maketrans(
         "’": "",
         "\"": "",
         "'": "",
-        "～": "。",
-        "~": "。",
+        "～": "，",
+        "~": "，",
         "…": "。",
         "—": "-",
         "–": "-",
@@ -136,6 +136,9 @@ SYN6288_NATURAL_PREFIX = ""
 SYN6288_SENTENCE_ENDINGS = "。！？.!?"
 SYN6288_PAUSES = "，,、；;：:"
 SYN6288_OPENING_PHRASES = ("没问题", "好的", "收到", "可以", "我在")
+WRAPPED_TTS_MAX_CHARS = 230
+TTS_ACTION_ID_LENGTH = len("act_") + 12
+TTS_CHUNK_MAX_BYTES = 90
 
 
 def syn6288_naturalize(text: str) -> str:
@@ -156,7 +159,7 @@ def syn6288_naturalize(text: str) -> str:
     return f"{SYN6288_NATURAL_PREFIX}{text}"
 
 
-def safe_tts_text(value: Any, max_bytes: int = 30) -> str:
+def safe_tts_text(value: Any, max_bytes: int = TTS_CHUNK_MAX_BYTES) -> str:
     text = compact_text(value, max_bytes * 2).translate(TTS_TRANSLATION)
     cleaned: list[str] = []
     for char in text:
@@ -166,7 +169,58 @@ def safe_tts_text(value: Any, max_bytes: int = 30) -> str:
         if ord(char) > 0xFFFF:
             continue
         cleaned.append(char)
-    return compact_utf8_text(syn6288_naturalize("".join(cleaned).strip()), max_bytes)
+    spoken = compact_utf8_text(syn6288_naturalize("".join(cleaned).strip()), max_bytes)
+    if spoken and spoken[-1] in SYN6288_PAUSES:
+        spoken = f"{spoken[:-1]}。"
+    return spoken
+
+
+def split_tts_text(value: Any, max_bytes: int = TTS_CHUNK_MAX_BYTES) -> list[str]:
+    """Keep every TTS UART frame short without discarding the rest of a reply."""
+    text = safe_tts_text(value, max_bytes=180)
+    clauses = [part for part in re.split(r"(?<=[。！？!?；;])", text) if part]
+    chunks: list[str] = []
+    for clause in clauses:
+        while len(clause.encode("utf-8")) > max_bytes:
+            piece, clause = _take_tts_chunk(clause, max_bytes)
+            chunks.append(piece)
+        if clause:
+            chunks.append(_finish_tts_chunk(clause, max_bytes))
+    return chunks or ["我在。"]
+
+
+def tts_playback_seconds(value: Any) -> float:
+    """Conservative SYN6288 playback estimate used between consecutive chunks."""
+    text = safe_tts_text(value, max_bytes=180)
+    chinese_chars = sum("\u3400" <= char <= "\u9fff" for char in text)
+    other_chars = sum(not char.isspace() for char in text) - chinese_chars
+    pauses = sum(char in SYN6288_SENTENCE_ENDINGS + SYN6288_PAUSES for char in text)
+    return min(4.0, max(0.45, chinese_chars * 0.24 + other_chars * 0.08 + pauses * 0.08 + 0.12))
+
+
+def _finish_tts_chunk(text: str, max_bytes: int) -> str:
+    if text[-1] in SYN6288_PAUSES:
+        return f"{text[:-1]}。"
+    if text[-1] in SYN6288_SENTENCE_ENDINGS:
+        return text
+    if len(text.encode("utf-8")) <= max_bytes - len("。".encode("utf-8")):
+        return f"{text}。"
+    piece, _ = _take_tts_chunk(text, max_bytes)
+    return piece
+
+
+def _take_tts_chunk(text: str, max_bytes: int) -> tuple[str, str]:
+    limit = max_bytes - len("。".encode("utf-8"))
+    used = 0
+    index = 0
+    for index, char in enumerate(text):
+        char_bytes = len(char.encode("utf-8"))
+        if used + char_bytes > limit:
+            break
+        used += char_bytes
+    else:
+        index = len(text)
+    return f"{text[:index]}。", text[index:]
 
 
 def utf8_hex(value: Any, max_bytes: int = 180) -> str:
@@ -215,12 +269,20 @@ def command_from_action(action: ActionSpec) -> str:
         if state not in {"IDLE", "BUSY", "OFF"}:
             state = "IDLE"
         return f"NET:AI:{state}"
+    if action_type == "telemetry_request":
+        return "NET:TELEMETRY?"
+    if action_type == "self_check_probe":
+        return "NET:UART?"
 
     raise ValueError(f"unsupported action type: {action_type}")
 
 
 def wrap_command(action_id: str, command: str) -> str:
-    return f"NET:CMD:{action_id}:{command}"
+    prefix = f"NET:CMD:{action_id}:"
+    wrapped = f"{prefix}{command}"
+    if command.startswith("NET:TTSHEX:") and len(wrapped) > WRAPPED_TTS_MAX_CHARS:
+        raise ValueError("tts_speak must be split into short UART-safe chunks before wrapping")
+    return wrapped
 
 
 def parse_ack_line(line: str) -> tuple[str, bool]:
