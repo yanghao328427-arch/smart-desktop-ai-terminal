@@ -41,6 +41,7 @@ def uart_safe_action_order(specs: list[ActionSpec]) -> list[ActionSpec]:
 
 
 DEVICE_ONLINE_TTL_SECONDS = 30
+RFID_PHYSICAL_CONTEXT_TTL_SECONDS = 300
 
 
 @dataclass
@@ -642,6 +643,9 @@ class RuntimeStore:
         device.sensors["active_session_id"] = session_id
         device.sensors["active_context_source"] = source
         device.sensors["active_context_physical_card"] = physical_card
+        device.sensors["active_context_physical_card_expired"] = False
+        device.sensors["active_context_at"] = now_utc().isoformat()
+        device.sensors["active_context_age_seconds"] = 0.0
         if user.uid:
             device.sensors["active_rfid_uid"] = user.uid
 
@@ -654,6 +658,9 @@ class RuntimeStore:
         device.sensors.pop("active_session_id", None)
         device.sensors.pop("active_context_source", None)
         device.sensors.pop("active_context_physical_card", None)
+        device.sensors.pop("active_context_physical_card_expired", None)
+        device.sensors.pop("active_context_at", None)
+        device.sensors.pop("active_context_age_seconds", None)
         device.sensors.pop("active_rfid_uid", None)
 
     def _refresh_counts(self, device_id: str) -> None:
@@ -661,7 +668,41 @@ class RuntimeStore:
         device.pending_action_count = sum(
             1 for action in self._actions.get(device_id, []) if action.status in {ActionStatus.queued, ActionStatus.sent}
         )
+        self._apply_physical_context_freshness(device)
         self._apply_device_freshness(device)
+
+    def _apply_physical_context_freshness(
+        self,
+        device: DeviceSnapshot,
+        stamp: datetime | None = None,
+    ) -> None:
+        sensors = device.sensors
+        if not device.current_user or not device.active_session_id:
+            sensors.pop("active_context_age_seconds", None)
+            return
+        raw_context_at = sensors.get("active_context_at") or sensors.get("last_rfid_at")
+        if not isinstance(raw_context_at, str) or not raw_context_at:
+            if sensors.get("active_context_physical_card") is True:
+                sensors["active_context_physical_card"] = False
+                sensors["active_context_physical_card_expired"] = True
+            return
+        try:
+            context_at = datetime.fromisoformat(raw_context_at.replace("Z", "+00:00"))
+            if context_at.tzinfo is None:
+                context_at = context_at.replace(tzinfo=timezone.utc)
+        except ValueError:
+            if sensors.get("active_context_physical_card") is True:
+                sensors["active_context_physical_card"] = False
+                sensors["active_context_physical_card_expired"] = True
+            return
+        age_seconds = max(0.0, ((stamp or now_utc()) - context_at.astimezone(timezone.utc)).total_seconds())
+        sensors["active_context_age_seconds"] = round(age_seconds, 3)
+        if (
+            sensors.get("active_context_physical_card") is True
+            and age_seconds > RFID_PHYSICAL_CONTEXT_TTL_SECONDS
+        ):
+            sensors["active_context_physical_card"] = False
+            sensors["active_context_physical_card_expired"] = True
 
     def _mark_device_seen(self, device: DeviceSnapshot, stamp: datetime | None = None) -> None:
         actual_stamp = stamp or now_utc()

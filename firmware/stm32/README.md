@@ -62,7 +62,7 @@ The executor separates incoming events from the persistent device state:
 - The eight states are `S0 BOOT`, `S1 LOCKED`, `S2 READY`, `S3 LISTEN`, `S4 PROCESS`, `S5 SPEAK`, `S6 EXEC`, and `S7 ERROR`.
 - OLED uses a fixed instrumentation layout: inverted state header, compact ASCII state title, divider, and dense status/action rows. `KEY1/PB12` switches the user, link/FPS, sensor, and actuator sub-screens; long press returns to the main state screen.
 - UART health checks, telemetry queries, RFID notices, and arbitrary OLED text do not overwrite the persistent state. In particular, `LOCKED` remains locked until `NET:LOCK:OFF`, even while heartbeats and telemetry continue.
-- RGB follows the same state machine: blue=startup, green=ready, cyan=listening, yellow=processing/speaking/executing, red=locked/error.
+- RGB follows the same state machine: blue=startup, green=ready, cyan=listening, yellow=processing/speaking/executing, solid red=locked, red double-blink=error. Error indication automatically returns to ready after about 3 seconds.
 - The ready screen shows current user id plus real sensor values; unavailable values use explicit dashes. OLED refresh runs at 400 kHz I2C with a 4 ms page-flush cadence and displays measured FPS on the link screen.
 - Parse/action/light/ACK timing and action ids remain on USB logs instead of appearing on the user-facing OLED.
 - USB logs one timing line per handled command:

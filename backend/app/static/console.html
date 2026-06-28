@@ -1630,7 +1630,7 @@
           <article id="hardware-page" class="card hardware-page view"><div class="view-title"><h2>硬件控制</h2><p>点击按钮直接下发动作到真实执行链路；页面会在日志里记录操作和 ACK 状态。</p></div><div id="hardware" class="hardware-card"><div class="mini-title"><span>执行器控制台</span><span id="hardware-meta" class="muted">直连动作接口</span></div><div class="hardware-grid"><button class="tool-card" data-tool="fan_on" type="button"><span class="tool-icon">风</span><span>风扇开启</span><small>action</small></button><button class="tool-card" data-tool="fan_off" type="button"><span class="tool-icon">停</span><span>风扇关闭</span><small>action</small></button><button class="tool-card" data-tool="beep" type="button"><span class="tool-icon">声</span><span>蜂鸣提醒</span><small>action</small></button><button class="tool-card warn" data-tool="lock" type="button"><span class="tool-icon">锁</span><span>锁定</span><small>action</small></button><button class="tool-card" data-tool="unlock" type="button"><span class="tool-icon">开</span><span>解锁</span><small>action</small></button></div></div><div class="info-box"><span>操作提示</span><strong>连接 WS 后触发动作，ACK 状态会同步显示在日志和诊断页。</strong><span class="data-note">管理员密码验证成功后仅在本次打开页面期间有效；未验证时需要刷已注册卡进入上下文。</span></div></article>
         </section>
         <section id="bottom-pages" class="bottom-grid hidden-group">
-          <article id="users" class="bottom-card view"><div class="mini-title"><span>用户账号</span><span id="users-status" class="muted">等待刷卡或管理员验证</span></div><div class="mini-title" style="margin-top:12px"><span>当前账号</span><span class="muted">来自硬件 RFID 刷卡</span></div><div id="current-user-info" class="info-box compact"></div><div class="mini-title" style="margin-top:16px"><span>已注册账号</span><span id="registered-user-count" class="muted">管理员验证后显示</span></div><div id="registered-user-list" class="action-list"><div class="empty-state">输入正确的管理员密码后，即可查看已注册账号总列表。</div></div></article>
+          <article id="users" class="bottom-card view"><div class="mini-title"><span>用户账号</span><span id="users-status" class="muted">等待刷卡或管理员验证</span></div><div class="mini-title" style="margin-top:12px"><span>当前账号</span><span id="current-user-source" class="muted">暂无身份上下文</span></div><div id="current-user-info" class="info-box compact"></div><div class="mini-title" style="margin-top:16px"><span>已注册账号</span><span id="registered-user-count" class="muted">管理员验证后显示</span></div><div id="registered-user-list" class="action-list"><div class="empty-state">输入正确的管理员密码后，即可查看已注册账号总列表。</div></div></article>
           <article id="rfid" class="bottom-card view"><div class="mini-title"><span>RFID 读取</span><span id="rfid-status-pill" class="tiny-pill warn">暂无记录</span></div><div id="rfid-current" class="info-box"></div><form id="rfid-form" class="form-stack"><input id="rfid-user-id" placeholder="已有 user_id（可选）" autocomplete="off"><input id="rfid-name" placeholder="用户名（新用户必填）" autocomplete="off"><input id="rfid-summary" placeholder="上下文摘要（可选）" autocomplete="off"><input id="rfid-notes" placeholder="管理备注（可选）" autocomplete="off"><select id="rfid-mode"><option value="study">study</option><option value="rest">rest</option><option value="admin">admin</option></select><input id="rfid-uid" placeholder="手动 UID 备选，例如 04A1B2C3" autocomplete="off"><div class="button-row"><button class="light-btn" id="rfid-enroll" type="submit">等待实体刷卡注册</button><button class="light-btn" id="rfid-manual-register" type="button">手动绑定 UID</button><button class="light-btn" id="rfid-scan" type="button">模拟刷卡</button></div></form></article>
           <article id="asr" class="bottom-card view"><div class="mini-title"><span>ASR 语音上传</span><span id="asr-status-pill" class="tiny-pill warn">暂无记录</span></div><div id="asr-current" class="info-box"></div><form id="asr-form" class="form-stack"><input id="asr-file" type="file" accept="audio/*"><button class="light-btn" type="submit">上传录音文件</button></form></article>
           <article id="history" class="bottom-card view"><div class="mini-title"><span>历史日志</span><span class="muted">对话 / RFID / ASR / ACK / 本地操作</span></div><div id="history-summary" class="history-summary"></div><div id="history-stream" class="history-stream"></div><div class="mini-title" style="margin-top:12px"><span>最近动作</span><span class="muted">来自诊断接口</span></div><div id="action-list" class="action-list"></div></article>
@@ -1670,7 +1670,23 @@
     try { localStorage.removeItem("controlToken"); } catch (err) {}
     const controlToken = () => pageControlToken;
     const authHeaders = () => controlToken() ? {"X-Demo-Token": controlToken()} : {};
-    const hasPhysicalUserContext = () => Boolean(lastState && lastState.current_user && lastState.active_session_id && (lastState.sensors || {}).active_context_physical_card === true);
+    const RFID_PHYSICAL_CONTEXT_TTL_MS = 5 * 60 * 1000;
+    const physicalContextFresh = (state = {}) => {
+      const sensors = state.sensors || {};
+      const rawTime = sensors.active_context_at || sensors.last_rfid_at;
+      const at = rawTime ? new Date(rawTime).getTime() : NaN;
+      const age = Number.isFinite(at) ? Math.max(0, Date.now() - at) : Infinity;
+      return Boolean(state.current_user && state.active_session_id && sensors.active_context_source === "rc522" && sensors.active_context_physical_card === true && age <= RFID_PHYSICAL_CONTEXT_TTL_MS);
+    };
+    const userContextPresentation = (state = {}) => {
+      const current = state.current_user, sensors = state.sensors || {}, source = sensors.active_context_source || "";
+      if (!current) return {source:"暂无身份上下文", status:"等待硬件刷卡", card:"未进入"};
+      if (physicalContextFresh(state)) return {source:"近期真实 RFID 刷卡", status:"实体卡授权有效", card:"近期实体刷卡已登录"};
+      if (source === "rc522" || sensors.active_context_physical_card_expired === true) return {source:"历史 RFID 身份上下文", status:"已恢复历史账号，等待重新刷卡", card:"历史账号（未重新刷卡）"};
+      if (source === "web_simulator") return {source:"网页模拟刷卡上下文", status:"模拟上下文，不代表实体刷卡", card:"模拟刷卡"};
+      return {source:"管理员选择的身份上下文", status:"当前账号不是实体卡登录", card:"管理员选择"};
+    };
+    const hasPhysicalUserContext = () => physicalContextFresh(lastState || {});
     const ensureAccessContext = () => { if (administratorPasswordVerified || hasPhysicalUserContext()) return true; local("先刷已注册 RFID 卡或输入正确的管理员密码"); return false; };
     const api = (path, options = {}) => fetch(path, {headers: {"Content-Type": "application/json", ...authHeaders(), ...(options.headers || {})}, ...options}).then(async (res) => { const data = await res.json(); if (!res.ok) throw new Error(data.detail || res.statusText); return data; });
     const setAdministratorPasswordStatus = (message, ok = null) => { text("admin-password-status", message); const node = $("admin-password-status"); if (node) node.style.color = ok === true ? "#15803d" : (ok === false ? "#dc2626" : ""); };
@@ -1881,21 +1897,23 @@
     const renderRfid = (state) => { const s = state.sensors || {}, uid = s.last_rfid_uid, ok = s.last_rfid_authorized === true, user = state.current_user; pill("rfid-status-pill", uid ? (ok ? "已通过" : "已拒绝") : "暂无记录", uid ? (ok ? "ok" : "bad") : "warn"); $("rfid-current").innerHTML = `<span>最新 UID</span><strong>${uid || NONE}</strong><span class="tiny-pill ${uid ? (ok ? "ok" : "bad") : "warn"}">${uid ? (ok ? "授权通过" : "未授权") : "等待刷卡"}</span><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><span>时间</span><span>来源</span><strong style="font-size:14px">${t(s.last_rfid_at)}</strong><strong style="font-size:14px">${s.last_rfid_source || "暂无"}</strong><span>用户</span><span>上下文</span><strong style="font-size:14px">${user ? `${user.name}/${user.mode}` : "暂无"}</strong><strong style="font-size:14px">${user && user.profile_summary ? user.profile_summary : "未设置"}</strong></div>`; };
     const renderUsers = (state = {}, users = null) => {
       const current = state.current_user;
+      const context = userContextPresentation(state);
+      text("current-user-source", context.source);
       const currentBox = $("current-user-info");
       if (currentBox) {
         currentBox.replaceChildren();
-        const fields = current ? [["账号名称", current.name], ["用户 ID", current.user_id], ["RFID", current.uid || "未绑定"], ["当前模式", current.mode], ["刷卡状态", state.active_session_id ? "已进入当前账号" : "未进入"]] : [["当前账号", "暂无已刷卡登录账号"]];
+        const fields = current ? [["账号名称", current.name], ["用户 ID", current.user_id], ["RFID", current.uid || "未绑定"], ["当前模式", current.mode], ["刷卡状态", context.card]] : [["当前账号", "暂无已刷卡登录账号"]];
         fields.forEach(([label, value]) => { const labelNode = document.createElement("span"); const valueNode = document.createElement("strong"); labelNode.textContent = label; valueNode.textContent = value; valueNode.style.fontSize = "14px"; currentBox.append(labelNode, valueNode); });
       }
       const status = $("users-status"), count = $("registered-user-count"), list = $("registered-user-list");
       if (!administratorPasswordVerified) {
-        if (status) status.textContent = current ? "已识别当前硬件账号" : "等待硬件刷卡";
+        if (status) status.textContent = context.status;
         if (count) count.textContent = "管理员验证后显示";
         if (list) list.innerHTML = '<div class="empty-state">输入正确的管理员密码后，即可查看已注册账号总列表。</div>';
         return;
       }
       const registered = Array.isArray(users) ? users : [];
-      if (status) status.textContent = "管理员已验证";
+      if (status) status.textContent = `管理员已验证；${context.status}`;
       if (count) count.textContent = `共 ${registered.length} 个账号`;
       if (!list) return;
       list.replaceChildren();

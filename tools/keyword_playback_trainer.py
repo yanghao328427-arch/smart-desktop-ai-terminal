@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-DEFAULT_PHRASES = ["灵宝灵宝", "你好灵宝", "灵宝你好", "小灵宝小灵宝"]
-DEFAULT_STOP_PHRASES = ["再见灵宝", "再见再见", "灵宝再见", "拜拜灵宝"]
+DEFAULT_PHRASES = ["你好小鑫", "你好小新", "你好小心", "你好小欣"]
+DEFAULT_STOP_PHRASES = ["再见小鑫", "再见再见", "小鑫再见", "拜拜小鑫"]
 DEFAULT_DETECT_REGEX = (
     r"wake|wakeup|hotword|keyword|kws|唤醒|识别|recognized|ASR OK|"
     r"灵宝|玲宝|凌宝|林宝|BT:ACK|NET:UI:LISTEN|NET:UI:OUTPUT"

@@ -118,17 +118,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return
         raise HTTPException(status_code=401, detail="control or device token required")
 
+    def has_fresh_physical_context(device_id: str) -> bool:
+        device = store.ensure_device(device_id)
+        return bool(
+            device.current_user
+            and device.active_session_id
+            and device.sensors.get("active_context_physical_card") is True
+        )
+
+    def has_websocket_user_context(device_id: str) -> bool:
+        device = store.ensure_device(device_id)
+        if not settings.control_token:
+            return bool(device.current_user and device.active_session_id)
+        return bool(
+            device.current_user
+            and device.active_session_id
+            and device.sensors.get("active_context_physical_card") is True
+        )
+
     def ensure_user_or_control_context(device_id: str, x_demo_token: str | None, user_id: str | None = None) -> bool:
         if control_token_ok(x_demo_token):
             if user_id:
                 store.select_user_context(device_id, user_id, source="control_select")
             return True
-        device = store.ensure_device(device_id)
-        if (
-            device.current_user
-            and device.active_session_id
-            and device.sensors.get("active_context_physical_card") is True
-        ):
+        if has_fresh_physical_context(device_id):
             return False
         raise HTTPException(status_code=403, detail="registered RFID card or control token required")
 
@@ -922,7 +935,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await websocket.send_json({"type": "error", "message": "text cannot be empty"})
                 return
             device = store.ensure_device(device_id)
-            if not device.current_user or not device.active_session_id:
+            if not has_websocket_user_context(device_id):
                 await websocket.send_json({"type": "error", "message": "registered RFID card required"})
                 return
             await run_text_turn(device_id, text, "websocket")
@@ -950,7 +963,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         if message_type == "tools/call":
             device = store.ensure_device(device_id)
-            if not device.current_user or not device.active_session_id:
+            if not has_websocket_user_context(device_id):
                 await websocket.send_json({"type": "error", "message": "registered RFID card required"})
                 return
             action_name = str(payload.get("name", "")).strip()

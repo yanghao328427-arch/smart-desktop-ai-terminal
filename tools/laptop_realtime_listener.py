@@ -36,28 +36,16 @@ from laptop_mic_sidecar import (
 
 DEFAULT_INPUT_DEVICE = "1"
 DEFAULT_SOURCE = "laptop_realtime_listener"
-DEFAULT_WAKE_PHRASES = ["灵宝灵宝", "你好灵宝", "在吗灵宝"]
+DEFAULT_WAKE_PHRASES = ["你好小鑫"]
 DEFAULT_WAKE_ALIASES = [
-    "灵宝你好",
-    "灵宝在吗",
-    "你好小灵宝",
-    "小灵宝小灵宝",
-    "小灵宝",
-    "玲宝玲宝",
-    "你好玲宝",
-    "凌宝凌宝",
-    "你好凌宝",
-    "林宝林宝",
-    "你好林宝",
-    "灵保灵保",
-    "你好灵保",
-    "灵堡灵堡",
-    "你好灵堡",
-    "零宝零宝",
-    "你好零宝",
+    "你好小新",
+    "你好小心",
+    "你好小欣",
+    "小鑫小鑫",
+    "小鑫",
 ]
-DEFAULT_STOP_PHRASES = ["再见灵宝", "再见再见"]
-DEFAULT_STOP_ALIASES = ["灵宝再见", "拜拜灵宝", "结束对话", "先这样吧"]
+DEFAULT_STOP_PHRASES = ["再见小鑫", "再见再见"]
+DEFAULT_STOP_ALIASES = ["小鑫再见", "拜拜小鑫", "结束对话", "先这样吧"]
 _LOCK_HANDLE: Any | None = None
 _BACKEND_PROCESS: subprocess.Popen[bytes] | None = None
 
@@ -92,7 +80,8 @@ def clear_screen(enabled: bool) -> None:
 
 def acquire_single_instance_lock() -> bool:
     global _LOCK_HANDLE
-    lock_path = Path(".tmp") / "laptop_realtime_listener.lock"
+    lock_root = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "SmartDeskAI"
+    lock_path = lock_root / "laptop_realtime_listener.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     handle = lock_path.open("a+b")
     try:
@@ -167,7 +156,12 @@ def locate_project_root(args: argparse.Namespace) -> Path | None:
 
 def backend_python_candidates(args: argparse.Namespace) -> list[list[str]]:
     candidates: list[list[str]] = []
-    explicit = args.backend_python or os.environ.get("LINGBAO_BACKEND_PYTHON") or os.environ.get("PYTHON")
+    explicit = (
+        args.backend_python
+        or os.environ.get("SMARTDESK_BACKEND_PYTHON")
+        or os.environ.get("LINGBAO_BACKEND_PYTHON")
+        or os.environ.get("PYTHON")
+    )
     if explicit:
         candidates.append([explicit])
 
@@ -334,7 +328,7 @@ def render_status(args: argparse.Namespace, status: RuntimeStatus, *, clear: boo
     wake_alias_count = max(0, len(getattr(args, "wake_match_phrase", args.wake_phrase)) - len(args.wake_phrase))
     stop_alias_count = max(0, len(getattr(args, "stop_match_phrase", args.stop_phrase)) - len(args.stop_phrase))
     lines = [
-        "Lingbao Voice Console",
+        "Xiaoxin Voice Console",
         "=" * 22,
         f"script: ONLINE",
         f"state: {status.state}",
@@ -1160,7 +1154,7 @@ def run_turn(args: argparse.Namespace, status: RuntimeStatus, audio: bytes, stat
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Lingbao manual realtime listener. It uses VAD to capture each spoken utterance "
+            "Xiaoxin manual realtime listener. It uses VAD to capture each spoken utterance "
             "silently, uploads it to /api/asr/transcribe with inject=false for ASR and echo "
             "filtering, injects non-echo recognized text into Qwen, waits for ESP32S3/STM32 ACK, "
             "then returns to listening for continuous dialogue."
@@ -1251,7 +1245,7 @@ def main() -> int:
         print("ERROR: RMS thresholds must be positive.", file=sys.stderr)
         return 2
     if not acquire_single_instance_lock():
-        print("ERROR: another Lingbao realtime listener is already running. Close it before starting a new one.", file=sys.stderr)
+        print("ERROR: another Xiaoxin realtime listener is already running. Close it before starting a new one.", file=sys.stderr)
         try:
             input("Press Enter to close...")
         except EOFError:

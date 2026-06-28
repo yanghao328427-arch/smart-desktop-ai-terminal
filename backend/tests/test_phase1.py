@@ -21,7 +21,7 @@ from app.actions import command_from_action
 from app.config import Settings
 from app.main import create_app, rfid_access_speech, rfid_spoken_name
 from app.schemas import ActionSpec
-from app.store import DEVICE_ONLINE_TTL_SECONDS, now_utc
+from app.store import DEVICE_ONLINE_TTL_SECONDS, RFID_PHYSICAL_CONTEXT_TTL_SECONDS, now_utc
 
 
 def make_client(**settings_overrides) -> TestClient:
@@ -372,6 +372,32 @@ def test_unknown_card_cannot_chat_until_card_or_control_context_exists():
     assert with_control.status_code == 200
     assert still_denied_after_manual_register.status_code == 403
     assert after_card.status_code == 200
+
+
+def test_real_rfid_authorization_expires_but_identity_context_remains():
+    client = make_client(control_token="control-secret", device_token="device-secret")
+    register_card(client, token="control-secret")
+    scan = client.post(
+        "/api/rfid/scan",
+        headers={"X-Device-Token": "device-secret"},
+        json={"device_id": "desktop-agent-001", "uid": "04A1B2C3", "source": "rc522"},
+    )
+    assert scan.status_code == 200
+    assert scan.json()["state"]["sensors"]["active_context_physical_card"] is True
+
+    device = client.app.state.store.ensure_device("desktop-agent-001")
+    device.sensors["active_context_at"] = (
+        now_utc() - timedelta(seconds=RFID_PHYSICAL_CONTEXT_TTL_SECONDS + 1)
+    ).isoformat()
+
+    state = client.get("/api/state/desktop-agent-001").json()
+    denied = client.post("/api/chat", json={"text": "未重新刷卡时不能继续控制"})
+
+    assert state["current_user"]["name"] == "student"
+    assert state["active_session_id"]
+    assert state["sensors"]["active_context_physical_card"] is False
+    assert state["sensors"]["active_context_physical_card_expired"] is True
+    assert denied.status_code == 403
 
 
 def test_different_cards_route_to_different_user_contexts():

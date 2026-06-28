@@ -24,7 +24,7 @@ from laptop_mic_sidecar import (
 )
 
 
-DEFAULT_WAKE_PHRASES = ["灵宝灵宝", "你好灵宝"]
+DEFAULT_WAKE_PHRASES = ["你好小鑫"]
 DEFAULT_WAKE_SOURCE = "laptop_wakeword_listener"
 DEFAULT_COMMAND_SOURCE = "laptop_wakeword_command"
 

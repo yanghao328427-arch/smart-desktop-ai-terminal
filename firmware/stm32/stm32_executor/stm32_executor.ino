@@ -62,6 +62,7 @@ static const uint16_t MUSIC_NOTE_GAP_MS = 35;
 static const uint32_t UI_BOOT_HOLD_MS = 1800;
 static const uint32_t UI_TRANSIENT_HOLD_MS = 2200;
 static const uint32_t UI_SPEAK_HOLD_MS = 7000;
+static const uint32_t UI_ERROR_HOLD_MS = 3000;
 static const uint32_t RGB_ACK_FLASH_MS = 520;
 static const uint8_t OLED_WIDTH = 128;
 static const uint8_t OLED_HEIGHT = 64;
@@ -912,7 +913,8 @@ void updateUiMachineState(uint32_t now) {
   uint32_t age = now - uiMachineStateStartedMs;
   if ((uiMachineState == UI_STATE_BOOT && age >= UI_BOOT_HOLD_MS) ||
       (uiMachineState == UI_STATE_EXECUTING && age >= UI_TRANSIENT_HOLD_MS) ||
-      (uiMachineState == UI_STATE_SPEAKING && age >= UI_SPEAK_HOLD_MS)) {
+      (uiMachineState == UI_STATE_SPEAKING && age >= UI_SPEAK_HOLD_MS) ||
+      (uiMachineState == UI_STATE_ERROR && age >= UI_ERROR_HOLD_MS)) {
     enterUiMachineState(UI_STATE_READY, now);
   }
 }
@@ -1468,6 +1470,8 @@ void updateRgbAnimation() {
       writeRgbRaw(pulse, pulse, false);
       break;
     case UI_STATE_LOCKED:
+      writeRgbRaw(true, false, false);
+      break;
     case UI_STATE_ERROR:
       {
         bool doubleBlink = phase < 140 || (phase >= 280 && phase < 420);
@@ -2421,6 +2425,10 @@ bool executeNetCommand(const String &command) {
     line += String(oledFps);
     line += ",volume_pct=";
     line += String(speechVolumePercent);
+    line += ",state=";
+    line += uiMachineCompactTitle(uiMachineState);
+    line += ",state_code=";
+    line += uiMachineCode(uiMachineState);
     line += ",user_id=";
     line += currentUserId;
     line += ",card_uid=";

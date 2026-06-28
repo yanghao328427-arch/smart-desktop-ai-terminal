@@ -24,6 +24,8 @@ deploy/aliyun-ecs/server_secret.local.json
 project.private.config.json
 edge/esp32s3/main/local_config.h
 output/
+outputs/
+work_assets/
 *.docx
 backend/data/*.json
 backend/data/*.db
